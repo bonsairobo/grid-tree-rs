@@ -401,8 +401,8 @@ where
 
     /// Returns an array of pointers to the children of `parent_ptr`.
     ///
-    /// Returns `None` if `parent_ptr` is at level 0. Otherwise, only the occupied children will have `NodePtr::is_null` be
-    /// `false`.
+    /// Returns `None` if `parent_ptr` is at level 0. Otherwise, only the vacant children will have their [`AllocPtr`] be
+    /// [`EMPTY_PTR`].
     #[inline]
     pub fn child_pointers(&self, parent_ptr: NodePtr) -> Option<ChildPointers<'_, CHILDREN>> {
         self.allocator(parent_ptr.level)
