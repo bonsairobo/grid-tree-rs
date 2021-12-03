@@ -25,6 +25,12 @@ impl NodePtr {
     pub fn level(&self) -> Level {
         self.level
     }
+
+    /// Null pointers can only be gotten by manually calling `Tree::child_pointers`.
+    #[inline]
+    pub fn is_null(&self) -> bool {
+        self.alloc_ptr == EMPTY_PTR
+    }
 }
 
 /// Info about a node's parent.
@@ -40,6 +46,13 @@ pub struct Parent<V> {
 pub struct ChildRelation<V> {
     pub child: NodePtr,
     pub parent: Option<Parent<V>>,
+}
+
+/// All children pointers for some branch node. Some may be null.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChildPointers<'a, const CHILDREN: usize> {
+    pub level: Level,
+    pub pointers: &'a [AllocPtr; CHILDREN],
 }
 
 /// A generic "grid tree" which can be either a quadtree or an octree depending on the type parameters.
@@ -273,11 +286,15 @@ where
             let min_sibling_coords = S::min_child_key(ancestor_coordinates);
             let offset = child_coords - min_sibling_coords;
             let child_index = S::linearize_child(offset);
-            let child_ptr = children[child_index as usize];
+            let child_ptr = children.pointers[child_index as usize];
 
-            (child_ptr.alloc_ptr != EMPTY_PTR)
+            (child_ptr != EMPTY_PTR)
                 .then(|| child_ptr)
                 .and_then(|child_ptr| {
+                    let child_ptr = NodePtr {
+                        level: children.level,
+                        alloc_ptr: child_ptr,
+                    };
                     if level_diff == 1 {
                         // Ancestor is the parent.
                         Some(ChildRelation {
@@ -305,9 +322,9 @@ where
         mut visitor: impl FnMut(ChildIndex, NodePtr),
     ) {
         if let Some(children) = self.child_pointers(parent_ptr) {
-            for (child_index, &child_ptr) in children.iter().enumerate() {
-                if child_ptr.alloc_ptr != EMPTY_PTR {
-                    visitor(child_index as ChildIndex, child_ptr);
+            for (child_index, &child_ptr) in children.pointers.iter().enumerate() {
+                if child_ptr != EMPTY_PTR {
+                    visitor(child_index as ChildIndex, NodePtr { level: children.level, alloc_ptr: child_ptr });
                 }
             }
         }
@@ -384,16 +401,17 @@ where
 
     /// Returns an array of pointers to the children of `parent_ptr`.
     ///
-    /// Returns `None` if `parent_ptr` is at level 0.
+    /// Returns `None` if `parent_ptr` is at level 0. Otherwise, only the occupied children will have `NodePtr::is_null` be
+    /// `false`.
     #[inline]
-    pub fn child_pointers(&self, parent_ptr: NodePtr) -> Option<[NodePtr; CHILDREN]> {
+    pub fn child_pointers(&self, parent_ptr: NodePtr) -> Option<ChildPointers<'_, CHILDREN>> {
         self.allocator(parent_ptr.level)
             .get_children(parent_ptr.alloc_ptr)
             .map(|children| {
-                children.map(|p| NodePtr {
+                ChildPointers {
                     level: parent_ptr.level - 1,
-                    alloc_ptr: p,
-                })
+                    pointers: children,
+                }
             })
     }
 
