@@ -1,7 +1,7 @@
 use crate::allocator::{AllocPtr, NodeAllocator, EMPTY_PTR};
 use crate::{BranchShape, ChildIndex, Level, SmallKeyHashMap, VectorKey};
 
-use smallvec::SmallVec;
+use tinyvec::tiny_vec;
 use std::collections::{hash_map, VecDeque};
 use std::marker::PhantomData;
 use std::mem;
@@ -14,7 +14,7 @@ pub struct NodeKey<V> {
 }
 
 /// Uniquely and stably identifies an occupied node in the [`Tree`] (until the node is removed).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct NodePtr {
     pub(crate) level: Level,
     pub(crate) alloc_ptr: AllocPtr,
@@ -371,7 +371,7 @@ where
         ancestor_coordinates: V,
         mut visitor: impl FnMut(NodePtr, V) -> bool,
     ) {
-        let mut stack = SmallVec::<[(NodePtr, V); 32]>::new();
+        let mut stack = tiny_vec!([(NodePtr, V); 32]);
         stack.push((ancestor_ptr, ancestor_coordinates));
         while let Some((parent_ptr, parent_coords)) = stack.pop() {
             let keep_going = visitor(parent_ptr, parent_coords);
@@ -434,7 +434,7 @@ where
         self.unlink_child(relation);
 
         // Drop node and all descendants.
-        let mut to_drop = SmallVec::<[NodePtr; 32]>::new();
+        let mut to_drop = tiny_vec!([NodePtr; 32]);
         to_drop.push(relation.child);
         while let Some(ptr) = to_drop.pop() {
             let (_value, children) = self.allocator_mut(ptr.level).remove(ptr.alloc_ptr);
@@ -462,7 +462,7 @@ where
     ) {
         self.unlink_child(relation);
 
-        let mut to_remove = SmallVec::<[(NodePtr, V); 32]>::new();
+        let mut to_remove = tiny_vec!([(NodePtr, V); 32]);
         to_remove.push((relation.child, coordinates));
         while let Some((ptr, coordinates)) = to_remove.pop() {
             let (value, children) = self.allocator_mut(ptr.level).remove(ptr.alloc_ptr);
