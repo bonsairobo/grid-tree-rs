@@ -2,19 +2,20 @@
 
 Voxel octrees and quadtrees.
 
-Store any type in an [`OctreeI32`], [`OctreeU32`], [`QuadtreeI32`], or [`QuadtreeU32`], all of which are specific instances
-of the generic [`Tree`]. A [`Tree`] represents a map from `(Level, Integer Coordinates)` to `T`. Thus it is useful for
-storing pixel or voxel data with level-of-detail.
+Store any type in an [`OctreeI32`](crate::OctreeI32), [`OctreeU32`](crate::OctreeU32), [`QuadtreeI32`](crate::QuadtreeI32),
+or [`QuadtreeU32`](crate::QuadtreeU32), all of which are specific instances of the generic [`Tree`](crate::Tree). A
+[`Tree`](crate::Tree) represents a map from `(Level, Integer Coordinates)` to `T`. Thus it is useful for storing pixel or
+voxel data with level-of-detail.
 
 ## Performance
 
-This structure is optimized for iteration speed and spatial queries like raycasting. Finding a single node by [`NodeKey`]
-starting from the root should be minimized as much as possible, so you might find it useful to cache [`NodePtr`]s or
-amortize the search with a full tree traversal. Memory usage is decent given the simplicity of the implementation, and the
-pointer overhead is easily amortized by using dense chunk values.
+This structure is optimized for iteration speed and spatial queries like raycasting. Finding a single node by
+[`NodeKey`](crate::NodeKey) starting from the root should be minimized as much as possible, so you might find it useful to
+cache [`NodePtr`](crate::NodePtr)s or amortize the search with a full tree traversal. Memory usage is decent given the
+simplicity of the implementation, and the pointer overhead is easily amortized by using dense chunk values.
 
-- random access with [`NodeKey`]: O(depth)
-- random access with [`NodePtr`]: O(1)
+- random access with [`NodeKey`](crate::NodeKey): O(depth)
+- random access with [`NodePtr`](crate::NodePtr): O(1)
 - iteration: O(nodes)
 - memory usage per node:
   - **level 0**: `size_of::<T>()` bytes
