@@ -1,4 +1,4 @@
-//! Voxel octrees and quadtrees.
+//! Pixel quadtrees and voxel octrees.
 //!
 //! Store any type in an [`OctreeI32`](crate::OctreeI32), [`OctreeU32`](crate::OctreeU32), [`QuadtreeI32`](crate::QuadtreeI32),
 //! or [`QuadtreeU32`](crate::QuadtreeU32), all of which are specific instances of the generic [`Tree`](crate::Tree). A
