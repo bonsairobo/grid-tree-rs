@@ -7,10 +7,11 @@
 //!
 //! # Performance
 //!
-//! This structure is optimized for iteration speed and spatial queries like raycasting. Finding a single node by
-//! [`NodeKey`](crate::NodeKey) starting from the root should be minimized as much as possible, so you might find it useful to
-//! cache [`NodePtr`](crate::NodePtr)s or amortize the search with a full tree traversal. Memory usage is decent given the
-//! simplicity of the implementation, and the pointer overhead is easily amortized by using dense chunk values.
+//! This structure is optimized for iteration speed and spatial queries that benefit from a bounding volume hierarchy (like
+//! raycasting). Finding a single node by [`NodeKey`](crate::NodeKey) starting from the root should be minimized as much as
+//! possible, so you might find it useful to cache [`NodePtr`](crate::NodePtr)s or amortize the search with a full tree
+//! traversal. Memory usage is decent given the simplicity of the implementation, and the pointer overhead is easily amortized
+//! by using dense chunk values.
 //!
 //! - random access with [`NodeKey`](crate::NodeKey): O(depth)
 //! - random access with [`NodePtr`](crate::NodePtr): O(1)
