@@ -3,7 +3,8 @@
 //! Store any type in an [`OctreeI32`](crate::OctreeI32), [`OctreeU32`](crate::OctreeU32), [`QuadtreeI32`](crate::QuadtreeI32),
 //! or [`QuadtreeU32`](crate::QuadtreeU32), all of which are specific instances of the generic [`Tree`](crate::Tree). A
 //! [`Tree`](crate::Tree) represents a map from `(Level, Integer Coordinates)` to `T`. Thus it is useful for storing pixel or
-//! voxel data with level-of-detail.
+//! voxel data with level-of-detail. The tree also requires that if a node slot is occupied (has data), then all ancestor slots
+//! are also filled.
 //!
 //! # Performance
 //!
