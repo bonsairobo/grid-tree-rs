@@ -48,11 +48,25 @@ pub struct ChildRelation<V> {
     pub parent: Option<Parent<V>>,
 }
 
-/// All children pointers for some branch node. Some may be [`EMPTY_PTR`].
+/// All children pointers for some branch node. Some may be empty.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChildPointers<'a, const CHILDREN: usize> {
-    pub level: Level,
-    pub pointers: &'a [AllocPtr; CHILDREN],
+    level: Level,
+    pointers: &'a [AllocPtr; CHILDREN],
+}
+
+impl<'a, const CHILDREN: usize> ChildPointers<'a, CHILDREN> {
+    /// Returns the child pointer at the given `child` linear index.
+    #[inline]
+    pub fn get_child(&self, child: ChildIndex) -> Option<NodePtr> {
+        let alloc_ptr = self.pointers[child as usize];
+        (alloc_ptr != EMPTY_PTR).then(|| NodePtr { level: self.level, alloc_ptr })
+    }
+
+    #[inline]
+    pub fn level(&self) -> Level {
+        self.level
+    }
 }
 
 /// A generic "grid tree" which can be either a quadtree or an octree depending on the type parameters.
@@ -401,8 +415,7 @@ where
 
     /// Returns an array of pointers to the children of `parent_ptr`.
     ///
-    /// Returns `None` if `parent_ptr` is at level 0. Otherwise, only the vacant children will have their [`AllocPtr`] be
-    /// [`EMPTY_PTR`].
+    /// Returns `None` if `parent_ptr` is at level 0.
     #[inline]
     pub fn child_pointers(&self, parent_ptr: NodePtr) -> Option<ChildPointers<'_, CHILDREN>> {
         self.allocator(parent_ptr.level)
