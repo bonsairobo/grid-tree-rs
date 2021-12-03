@@ -1,0 +1,17 @@
+[package]
+name = "grid-tree"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["glam"]
+
+[dependencies]
+ahash = "0.7"
+slab = "0.4"
+smallvec = "1.7"
+
+ndshape = { git = "https://github.com/bonsairobo/ndshape-rs", branch = "main" }
+
+# The default choice of VectorKey.
+glam = { version = "0.19", optional = true }
