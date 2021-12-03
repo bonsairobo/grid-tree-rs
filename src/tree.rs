@@ -439,7 +439,7 @@ where
         }
     }
 
-    /// Moves the node at `coordinates` and all descendants into `consumer`.
+    /// Moves the child node of `relation` (with `coordinates`) and all descendants into `consumer`.
     #[inline]
     pub fn remove_tree(
         &mut self,
