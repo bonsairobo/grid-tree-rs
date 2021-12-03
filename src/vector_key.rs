@@ -5,7 +5,6 @@ use std::ops::{Add, Shl, Shr, Sub};
 pub trait VectorKey:
     Sized
     + Copy
-    + Default
     + Add<Output = Self>
     + Sub<Output = Self>
     + Shl<Output = Self>

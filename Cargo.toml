@@ -11,7 +11,7 @@ default = ["glam"]
 [dependencies]
 ahash = "0.7"
 slab = "0.4"
-tinyvec = { version = "1.5", features = ["alloc"] }
+smallvec = "1.7"
 
 ndshape = "0.2"
 
