@@ -12,7 +12,7 @@ pub struct NodeAllocator<T, const CHILDREN: usize> {
     values: Slab<T>,
 }
 
-/// Points to a node owned by a [`NodeAllocator`].
+/// Points to a node owned by an internal allocator.
 pub type AllocPtr = u32;
 
 /// An [`AllocPtr`] that doesn't point to anything.

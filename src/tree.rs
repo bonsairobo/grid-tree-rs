@@ -48,7 +48,7 @@ pub struct ChildRelation<V> {
     pub parent: Option<Parent<V>>,
 }
 
-/// All children pointers for some branch node. Some may be null.
+/// All children pointers for some branch node. Some may be [`EMPTY_PTR`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChildPointers<'a, const CHILDREN: usize> {
     pub level: Level,

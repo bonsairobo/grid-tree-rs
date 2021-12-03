@@ -27,6 +27,7 @@ mod shape;
 mod tree;
 mod vector_key;
 
+pub use allocator::{AllocPtr, EMPTY_PTR};
 pub use shape::*;
 pub use tree::*;
 pub use vector_key::*;
