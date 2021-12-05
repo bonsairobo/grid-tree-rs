@@ -60,7 +60,10 @@ impl<'a, const CHILDREN: usize> ChildPointers<'a, CHILDREN> {
     #[inline]
     pub fn get_child(&self, child: ChildIndex) -> Option<NodePtr> {
         let alloc_ptr = self.pointers[child as usize];
-        (alloc_ptr != EMPTY_PTR).then(|| NodePtr { level: self.level, alloc_ptr })
+        (alloc_ptr != EMPTY_PTR).then(|| NodePtr {
+            level: self.level,
+            alloc_ptr,
+        })
     }
 
     #[inline]
@@ -123,6 +126,20 @@ where
             level: self.root_level(),
             coordinates,
         }
+    }
+
+    /// Iterate over all root nodes.
+    pub fn iter_roots(&self) -> impl Iterator<Item = (V, NodePtr)> + '_ {
+        let root_level = self.root_level();
+        self.root_nodes.iter().map(move |(&coordinates, &ptr)| {
+            (
+                coordinates,
+                NodePtr {
+                    level: root_level,
+                    alloc_ptr: ptr,
+                },
+            )
+        })
     }
 
     /// Returns true iff this tree contains a node for `ptr`.
@@ -338,7 +355,13 @@ where
         if let Some(children) = self.child_pointers(parent_ptr) {
             for (child_index, &child_ptr) in children.pointers.iter().enumerate() {
                 if child_ptr != EMPTY_PTR {
-                    visitor(child_index as ChildIndex, NodePtr { level: children.level, alloc_ptr: child_ptr });
+                    visitor(
+                        child_index as ChildIndex,
+                        NodePtr {
+                            level: children.level,
+                            alloc_ptr: child_ptr,
+                        },
+                    );
                 }
             }
         }
@@ -420,11 +443,9 @@ where
     pub fn child_pointers(&self, parent_ptr: NodePtr) -> Option<ChildPointers<'_, CHILDREN>> {
         self.allocator(parent_ptr.level)
             .get_children(parent_ptr.alloc_ptr)
-            .map(|children| {
-                ChildPointers {
-                    level: parent_ptr.level - 1,
-                    pointers: children,
-                }
+            .map(|children| ChildPointers {
+                level: parent_ptr.level - 1,
+                pointers: children,
             })
     }
 
