@@ -129,15 +129,15 @@ where
     }
 
     /// Iterate over all root nodes.
-    pub fn iter_roots(&self) -> impl Iterator<Item = (V, NodePtr)> + '_ {
+    pub fn iter_roots(&self) -> impl Iterator<Item = (NodePtr, V)> + '_ {
         let root_level = self.root_level();
         self.root_nodes.iter().map(move |(&coordinates, &ptr)| {
             (
-                coordinates,
                 NodePtr {
                     level: root_level,
                     alloc_ptr: ptr,
                 },
+                coordinates,
             )
         })
     }
