@@ -229,32 +229,31 @@ where
         let parent_alloc = right.first_mut().unwrap();
 
         let mut old_value = None;
-        if let Some(children) = parent_alloc.get_children_mut(parent_ptr.alloc_ptr) {
-            let child_ptr = &mut children[child_index as usize];
-            if *child_ptr == EMPTY_PTR {
-                if child_level > 0 {
-                    let (new_child_ptr, _) = child_alloc.insert_branch(child_value);
-                    *child_ptr = new_child_ptr;
-                } else {
-                    *child_ptr = child_alloc.insert_leaf(child_value);
-                }
-            } else {
-                let current_value = unsafe { child_alloc.get_value_unchecked_mut(*child_ptr) };
-                old_value = Some(mem::replace(current_value, child_value));
-            }
-            (
-                NodePtr {
-                    level: child_level,
-                    alloc_ptr: *child_ptr,
-                },
-                old_value,
-            )
-        } else {
-            panic!(
+        let children = parent_alloc
+            .get_children_mut(parent_ptr.alloc_ptr)
+            .expect(&format!(
                 "Tried inserting child of {:?} which has no child pointers",
-                parent_ptr
-            );
+                parent_ptr,
+            ));
+        let child_ptr = &mut children[child_index as usize];
+        if *child_ptr == EMPTY_PTR {
+            if child_level > 0 {
+                let (new_child_ptr, _) = child_alloc.insert_branch(child_value);
+                *child_ptr = new_child_ptr;
+            } else {
+                *child_ptr = child_alloc.insert_leaf(child_value);
+            }
+        } else {
+            let current_value = unsafe { child_alloc.get_value_unchecked_mut(*child_ptr) };
+            old_value = Some(mem::replace(current_value, child_value));
         }
+        (
+            NodePtr {
+                level: child_level,
+                alloc_ptr: *child_ptr,
+            },
+            old_value,
+        )
     }
 
     /// Same as `insert_child` but `child_offset` is linearized into a [`ChildIndex`] based on the [`BranchShape`].
