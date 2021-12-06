@@ -645,6 +645,21 @@ pub struct FillCommand<T> {
     pub visit_command: VisitCommand,
 }
 
+impl<T> FillCommand<T> {
+    #[inline]
+    pub fn new(data: Option<T>, visit_command: VisitCommand) -> Self {
+        Self {
+            data,
+            visit_command,
+        }
+    }
+
+    #[inline]
+    pub fn new_empty(visit_command: VisitCommand) -> Self {
+        Self::new(None, visit_command)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SlotState {
     Occupied,
