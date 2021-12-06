@@ -346,7 +346,7 @@ where
         }
     }
 
-    /// Inserts `fill_value()` in every descendant "slot" of `ancestor_ptr` where `fill_value` returns `Some`.
+    /// Inserts the data from `filler()` in every descendant "slot" of `ancestor_ptr` where `filler` returns `Some`.
     ///
     /// Any node N is skipped if `predicate` returns false for any ancestor of N.
     #[inline]
@@ -354,17 +354,19 @@ where
         &mut self,
         ancestor_ptr: NodePtr,
         ancestor_coordinates: V,
-        mut fill_value: impl FnMut(NodePtr, V, SlotState) -> Option<T>,
+        mut filler: impl FnMut(NodePtr, V, SlotState) -> FillCommand<T>,
     ) {
         let mut stack = SmallVec::<[(NodePtr, V); 32]>::new();
         stack.push((ancestor_ptr, ancestor_coordinates));
         while let Some((parent_ptr, parent_coords)) = stack.pop() {
             self.fill_children(parent_ptr, |child_ptr, child_index, node_state| {
                 let child_coords = parent_coords + S::delinearize_child(child_index);
-                fill_value(child_ptr, child_coords, node_state).map(|new_value| {
+                let command = filler(child_ptr, child_coords, node_state);
+                let fill_value = command.data.map(|new_value| new_value);
+                if command.visit_command == VisitCommand::Continue {
                     stack.push((child_ptr, child_coords));
-                    new_value
-                })
+                }
+                fill_value
             });
         }
     }
@@ -491,13 +493,13 @@ where
         &self,
         ancestor_ptr: NodePtr,
         ancestor_coordinates: V,
-        mut visitor: impl FnMut(NodePtr, V) -> bool,
+        mut visitor: impl FnMut(NodePtr, V) -> VisitCommand,
     ) {
         let mut stack = SmallVec::<[(NodePtr, V); 32]>::new();
         stack.push((ancestor_ptr, ancestor_coordinates));
         while let Some((parent_ptr, parent_coords)) = stack.pop() {
-            let keep_going = visitor(parent_ptr, parent_coords);
-            if keep_going {
+            let command = visitor(parent_ptr, parent_coords);
+            if command == VisitCommand::Continue {
                 self.visit_children_with_coordinates(
                     parent_ptr,
                     parent_coords,
@@ -517,13 +519,13 @@ where
         &self,
         ancestor_ptr: NodePtr,
         ancestor_coordinates: V,
-        mut visitor: impl FnMut(NodePtr, V) -> bool,
+        mut visitor: impl FnMut(NodePtr, V) -> VisitCommand,
     ) {
         let mut queue = VecDeque::new();
         queue.push_back((ancestor_ptr, ancestor_coordinates));
         while let Some((parent_ptr, parent_coords)) = queue.pop_front() {
-            let keep_going = visitor(parent_ptr, parent_coords);
-            if keep_going {
+            let command = visitor(parent_ptr, parent_coords);
+            if command == VisitCommand::Continue {
                 self.visit_children_with_coordinates(
                     parent_ptr,
                     parent_coords,
@@ -630,6 +632,17 @@ where
     fn allocator_mut(&mut self, level: Level) -> &mut NodeAllocator<T, CHILDREN> {
         &mut self.allocators[level as usize]
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VisitCommand {
+    Continue,
+    SkipDescendants,
+}
+
+pub struct FillCommand<T> {
+    pub data: Option<T>,
+    pub visit_command: VisitCommand,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -804,7 +817,7 @@ mod test {
         let mut visited = Vec::new();
         tree.visit_tree_depth_first(root_ptr, root_coords, |child_ptr, child_coords| {
             visited.push((child_coords, child_ptr));
-            true
+            VisitCommand::Continue
         });
         assert_eq!(
             visited.as_slice(),
@@ -820,7 +833,7 @@ mod test {
         let mut visited = Vec::new();
         tree.visit_tree_breadth_first(root_ptr, root_coords, |child_ptr, child_coords| {
             visited.push((child_coords, child_ptr));
-            true
+            VisitCommand::Continue
         });
         assert_eq!(
             visited.as_slice(),
@@ -859,7 +872,7 @@ mod test {
         let mut visited = Vec::new();
         tree.visit_tree_breadth_first(root_ptr, root_coords, |ptr, coords| {
             visited.push((ptr, coords));
-            true
+            VisitCommand::Continue
         });
 
         assert_eq!(
@@ -921,7 +934,7 @@ mod test {
         let mut visited = Vec::new();
         tree.visit_tree_breadth_first(root_ptr, root_coords, |ptr, coords| {
             visited.push((ptr, coords));
-            true
+            VisitCommand::Continue
         });
 
         assert_eq!(
@@ -976,7 +989,10 @@ mod test {
         tree.fill_descendants(
             root_ptr,
             root_coords,
-            |_child_ptr, _child_coords, _state| Some(()),
+            |_child_ptr, _child_coords, _state| FillCommand {
+                data: Some(()),
+                visit_command: VisitCommand::Continue,
+            },
         );
 
         let mut visited_lvl0 = SmallKeyHashMap::new();
@@ -984,7 +1000,7 @@ mod test {
             if child_ptr.level() == 0 && child_coords % 2 == IVec3::ZERO {
                 visited_lvl0.insert(child_coords, child_ptr);
             }
-            true
+            VisitCommand::Continue
         });
 
         let mut expected_lvl0 = SmallKeyHashMap::new();
