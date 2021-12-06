@@ -43,6 +43,16 @@ impl<T, const CHILDREN: usize> NodeAllocator<T, CHILDREN> {
     }
 
     #[inline]
+    pub fn vacant_value_entry(&mut self) -> slab::VacantEntry<'_, T> {
+        self.values.vacant_entry()
+    }
+
+    #[inline]
+    pub fn insert_pointers(&mut self) -> AllocPtr {
+        self.pointers.insert([EMPTY_PTR; CHILDREN]) as AllocPtr
+    }
+
+    #[inline]
     pub fn remove(&mut self, ptr: AllocPtr) -> (Option<T>, Option<[AllocPtr; CHILDREN]>) {
         (
             self.values.try_remove(ptr as usize),
@@ -67,6 +77,14 @@ impl<T, const CHILDREN: usize> NodeAllocator<T, CHILDREN> {
     }
 
     #[inline]
+    pub fn get_children_mut_or_panic(&mut self, ptr: AllocPtr) -> &mut [AllocPtr; CHILDREN] {
+        self.get_children_mut(ptr).expect(&format!(
+            "Tried inserting children of {:?} which has no child pointers",
+            ptr,
+        ))
+    }
+
+    #[inline]
     pub fn get_value(&self, ptr: AllocPtr) -> Option<&T> {
         self.values.get(ptr as usize)
     }
@@ -87,9 +105,19 @@ impl<T, const CHILDREN: usize> NodeAllocator<T, CHILDREN> {
     }
 
     #[inline]
-    pub fn unlink_child(&mut self, parent_ptr: AllocPtr, child_index: ChildIndex) {
-        if let Some(children) = self.pointers.get_mut(parent_ptr as usize) {
-            children[child_index as usize] = EMPTY_PTR;
+    pub fn set_child_pointer(
+        &mut self,
+        parent_ptr: AllocPtr,
+        child_index: ChildIndex,
+        child_ptr: AllocPtr,
+    ) {
+        if let Some(children) = self.get_children_mut(parent_ptr) {
+            children[child_index as usize] = child_ptr;
         }
+    }
+
+    #[inline]
+    pub fn unlink_child(&mut self, parent_ptr: AllocPtr, child_index: ChildIndex) {
+        self.set_child_pointer(parent_ptr, child_index, EMPTY_PTR)
     }
 }

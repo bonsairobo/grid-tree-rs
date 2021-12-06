@@ -229,12 +229,7 @@ where
         let parent_alloc = right.first_mut().unwrap();
 
         let mut old_value = None;
-        let children = parent_alloc
-            .get_children_mut(parent_ptr.alloc_ptr)
-            .expect(&format!(
-                "Tried inserting child of {:?} which has no child pointers",
-                parent_ptr,
-            ));
+        let children = parent_alloc.get_children_mut_or_panic(parent_ptr.alloc_ptr);
         let child_ptr = &mut children[child_index as usize];
         if *child_ptr == EMPTY_PTR {
             if child_level > 0 {
@@ -267,6 +262,88 @@ where
         child_value: T,
     ) -> (NodePtr, Option<T>) {
         self.insert_child(parent_ptr, S::linearize_child(child_offset), child_value)
+    }
+
+    /// Inserts `fill_value()` in every child "slot" of `parent_ptr` where `fill_value` returns `Some`.
+    ///
+    /// This does nothing if `parent_ptr.level() == 0`.
+    ///
+    /// If `fill_value` returns `None`, then the [`NodePtr`] passed in may become invalid if the node did not already exist.
+    /// This is necessary to allow callers to cache the pointers that they actually do fill.
+    ///
+    /// Old values are overwritten and dropped.
+    #[inline]
+    pub fn fill_children(
+        &mut self,
+        parent_ptr: NodePtr,
+        mut fill_value: impl FnMut(NodePtr, ChildIndex) -> Option<T>,
+    ) {
+        if parent_ptr.level == 0 {
+            return;
+        }
+
+        let child_level = parent_ptr.level - 1;
+        let (left, right) = self.allocators.split_at_mut(parent_ptr.level as usize);
+        let child_alloc = left.last_mut().unwrap();
+        let parent_alloc = right.first_mut().unwrap();
+
+        let children = parent_alloc.get_children_mut_or_panic(parent_ptr.alloc_ptr);
+        for (child_index, child_ptr) in children.iter_mut().enumerate() {
+            let child_index = child_index as ChildIndex;
+            if *child_ptr == EMPTY_PTR {
+                // We need to create a new value entry, which may or may not get filled.
+                let child_value_entry = child_alloc.vacant_value_entry();
+                let child_node_ptr = NodePtr {
+                    level: child_level,
+                    alloc_ptr: child_value_entry.key() as AllocPtr,
+                };
+                if let Some(new_value) = fill_value(child_node_ptr, child_index) {
+                    *child_ptr = child_node_ptr.alloc_ptr;
+                    child_value_entry.insert(new_value);
+                    if child_level > 0 {
+                        // HACK: Sadly it's not easy to ask for two vacant entries from the allocator at once. So if this is a
+                        // branch, we sneakily insert its pointers here to maintain the invariant that all branches have child
+                        // pointers.
+                        child_alloc.insert_pointers();
+                    }
+                } else {
+                    // The child_value_entry is dropped here and the AllocPtr becomes invalid.
+                }
+            } else {
+                // We already have a value for this child, so we can just overwrite it.
+                let child_node_ptr = NodePtr {
+                    level: child_level,
+                    alloc_ptr: *child_ptr,
+                };
+                if let Some(new_value) = fill_value(child_node_ptr, child_index) {
+                    let current_value = unsafe { child_alloc.get_value_unchecked_mut(*child_ptr) };
+                    *current_value = new_value;
+                }
+            }
+        }
+    }
+
+    /// Inserts `fill_value()` in every descendant "slot" of `ancestor_ptr` where `fill_value` returns `Some`.
+    ///
+    /// Any node N is skipped if `predicate` returns false for any ancestor of N.
+    #[inline]
+    pub fn fill_descendants(
+        &mut self,
+        ancestor_ptr: NodePtr,
+        ancestor_coordinates: V,
+        mut fill_value: impl FnMut(NodePtr, V) -> Option<T>,
+    ) {
+        let mut stack = SmallVec::<[(NodePtr, V); 32]>::new();
+        stack.push((ancestor_ptr, ancestor_coordinates));
+        while let Some((parent_ptr, parent_coords)) = stack.pop() {
+            self.fill_children(parent_ptr, |child_ptr, child_index| {
+                let child_coords = parent_coords + S::delinearize_child(child_index);
+                fill_value(child_ptr, child_coords).map(|new_value| {
+                    stack.push((child_ptr, child_coords));
+                    new_value
+                })
+            });
+        }
     }
 
     /// Looks up the root pointer for `coords` in the top-level hash map.
@@ -349,17 +426,17 @@ where
     pub fn visit_children(
         &self,
         parent_ptr: NodePtr,
-        mut visitor: impl FnMut(ChildIndex, NodePtr),
+        mut visitor: impl FnMut(NodePtr, ChildIndex),
     ) {
         if let Some(children) = self.child_pointers(parent_ptr) {
             for (child_index, &child_ptr) in children.pointers.iter().enumerate() {
                 if child_ptr != EMPTY_PTR {
                     visitor(
-                        child_index as ChildIndex,
                         NodePtr {
                             level: children.level,
                             alloc_ptr: child_ptr,
                         },
+                        child_index as ChildIndex,
                     );
                 }
             }
@@ -376,7 +453,7 @@ where
         parent_coordinates: V,
         mut visitor: impl FnMut(NodePtr, V),
     ) {
-        self.visit_children(parent_ptr, |child_index, child_ptr| {
+        self.visit_children(parent_ptr, |child_ptr, child_index| {
             let child_offset = S::delinearize_child(child_index as ChildIndex);
             let child_coords = S::min_child_key(parent_coordinates) + child_offset;
             visitor(child_ptr, child_coords)
@@ -815,5 +892,59 @@ mod test {
                 (grandchild2_ptr, IVec3::new(6, 6, 6))
             ]
         );
+    }
+
+    #[test]
+    fn fill_some_children() {
+        let mut tree = OctreeI32::new(3);
+
+        let root_coords = IVec3::new(1, 1, 1);
+        let (root_ptr, _) = tree.insert_root(root_coords, ());
+        tree.fill_children(root_ptr, |_child_ptr, child_index| {
+            (child_index % 2 == 0).then(|| ())
+        });
+
+        let mut visited_indices = Vec::new();
+        tree.visit_children(root_ptr, |_child_ptr, child_index| {
+            visited_indices.push(child_index);
+        });
+
+        assert_eq!(visited_indices.as_slice(), &[0, 2, 4, 6]);
+    }
+
+    #[test]
+    fn fill_some_descendants() {
+        let mut tree = OctreeI32::new(3);
+
+        let root_coords = IVec3::new(1, 1, 1);
+        let (root_ptr, _) = tree.insert_root(root_coords, ());
+        tree.fill_descendants(root_ptr, root_coords, |_child_ptr, _child_coords| Some(()));
+
+        let mut visited_lvl0 = SmallKeyHashMap::new();
+        tree.visit_tree_depth_first(root_ptr, root_coords, |child_ptr, child_coords| {
+            if child_ptr.level() == 0 && child_coords % 2 == IVec3::ZERO {
+                visited_lvl0.insert(child_coords, child_ptr);
+            }
+            true
+        });
+
+        let mut expected_lvl0 = SmallKeyHashMap::new();
+        for z in 4..8 {
+            for y in 4..8 {
+                for x in 4..8 {
+                    let p = IVec3::new(x, y, z);
+                    if p % 2 == IVec3::ZERO {
+                        let relation = tree
+                            .find_node(NodeKey {
+                                level: 0,
+                                coordinates: p,
+                            })
+                            .unwrap();
+                        expected_lvl0.insert(p, relation.child);
+                    }
+                }
+            }
+        }
+        assert_eq!(visited_lvl0, expected_lvl0);
     }
 }
