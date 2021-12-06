@@ -214,6 +214,26 @@ where
         )
     }
 
+    /// Gets the root pointer or calls `filler` to insert a value first.
+    #[inline]
+    pub fn get_or_create_root(&mut self, coordinates: V, mut filler: impl FnMut() -> T) -> NodePtr {
+        let level = self.root_level();
+        let Self {
+            root_nodes,
+            allocators,
+            ..
+        } = self;
+        let alloc = &mut allocators[level as usize];
+        let root_ptr = *root_nodes.entry(coordinates).or_insert_with(|| {
+            let (root_ptr, _children) = alloc.insert_branch(filler());
+            root_ptr
+        });
+        NodePtr {
+            level,
+            alloc_ptr: root_ptr,
+        }
+    }
+
     /// Inserts a child node of `parent_ptr` storing `child_value`. Returns the old child value if one exists.
     #[inline]
     pub fn insert_child(
@@ -641,6 +661,17 @@ mod test {
         assert_eq!(old_value, Some("val1"));
         assert!(tree.contains_node(ptr));
         assert_eq!(tree.get_value(ptr), Some(&"val2"));
+    }
+
+    #[test]
+    fn get_or_create_root() {
+        let mut tree = OctreeI32::new(3);
+
+        let ptr = tree.get_or_create_root(IVec3::ZERO, || ());
+        assert_eq!(ptr, tree.get_or_create_root(IVec3::ZERO, || ()));
+
+        let (ptr, _old_value) = tree.insert_root(IVec3::ONE, ());
+        assert_eq!(ptr, tree.get_or_create_root(IVec3::ONE, || ()));
     }
 
     #[test]
