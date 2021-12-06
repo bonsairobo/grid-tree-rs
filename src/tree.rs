@@ -21,6 +21,11 @@ pub struct NodePtr {
 }
 
 impl NodePtr {
+    pub const NULL: Self = NodePtr {
+        level: 0,
+        alloc_ptr: EMPTY_PTR,
+    };
+
     #[inline]
     pub fn level(&self) -> Level {
         self.level
