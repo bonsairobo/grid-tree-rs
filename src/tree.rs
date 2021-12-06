@@ -296,7 +296,7 @@ where
     pub fn fill_children(
         &mut self,
         parent_ptr: NodePtr,
-        mut fill_value: impl FnMut(NodePtr, ChildIndex) -> Option<T>,
+        mut fill_value: impl FnMut(NodePtr, ChildIndex, SlotState) -> Option<T>,
     ) {
         if parent_ptr.level == 0 {
             return;
@@ -317,7 +317,8 @@ where
                     level: child_level,
                     alloc_ptr: child_value_entry.key() as AllocPtr,
                 };
-                if let Some(new_value) = fill_value(child_node_ptr, child_index) {
+                if let Some(new_value) = fill_value(child_node_ptr, child_index, SlotState::Vacant)
+                {
                     *child_ptr = child_node_ptr.alloc_ptr;
                     child_value_entry.insert(new_value);
                     if child_level > 0 {
@@ -335,7 +336,9 @@ where
                     level: child_level,
                     alloc_ptr: *child_ptr,
                 };
-                if let Some(new_value) = fill_value(child_node_ptr, child_index) {
+                if let Some(new_value) =
+                    fill_value(child_node_ptr, child_index, SlotState::Occupied)
+                {
                     let current_value = unsafe { child_alloc.get_value_unchecked_mut(*child_ptr) };
                     *current_value = new_value;
                 }
@@ -351,14 +354,14 @@ where
         &mut self,
         ancestor_ptr: NodePtr,
         ancestor_coordinates: V,
-        mut fill_value: impl FnMut(NodePtr, V) -> Option<T>,
+        mut fill_value: impl FnMut(NodePtr, V, SlotState) -> Option<T>,
     ) {
         let mut stack = SmallVec::<[(NodePtr, V); 32]>::new();
         stack.push((ancestor_ptr, ancestor_coordinates));
         while let Some((parent_ptr, parent_coords)) = stack.pop() {
-            self.fill_children(parent_ptr, |child_ptr, child_index| {
+            self.fill_children(parent_ptr, |child_ptr, child_index, node_state| {
                 let child_coords = parent_coords + S::delinearize_child(child_index);
-                fill_value(child_ptr, child_coords).map(|new_value| {
+                fill_value(child_ptr, child_coords, node_state).map(|new_value| {
                     stack.push((child_ptr, child_coords));
                     new_value
                 })
@@ -627,6 +630,12 @@ where
     fn allocator_mut(&mut self, level: Level) -> &mut NodeAllocator<T, CHILDREN> {
         &mut self.allocators[level as usize]
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SlotState {
+    Occupied,
+    Vacant,
 }
 
 // ████████╗███████╗███████╗████████╗
@@ -931,7 +940,7 @@ mod test {
 
         let root_coords = IVec3::new(1, 1, 1);
         let (root_ptr, _) = tree.insert_root(root_coords, ());
-        tree.fill_children(root_ptr, |_child_ptr, child_index| {
+        tree.fill_children(root_ptr, |_child_ptr, child_index, _state| {
             (child_index % 2 == 0).then(|| ())
         });
 
@@ -939,8 +948,23 @@ mod test {
         tree.visit_children(root_ptr, |_child_ptr, child_index| {
             visited_indices.push(child_index);
         });
-
         assert_eq!(visited_indices.as_slice(), &[0, 2, 4, 6]);
+
+        tree.fill_children(root_ptr, |_child_ptr, child_index, state| {
+            if child_index % 2 == 0 {
+                assert_eq!(state, SlotState::Occupied);
+                None
+            } else {
+                assert_eq!(state, SlotState::Vacant);
+                Some(())
+            }
+        });
+
+        let mut visited_indices = Vec::new();
+        tree.visit_children(root_ptr, |_child_ptr, child_index| {
+            visited_indices.push(child_index);
+        });
+        assert_eq!(visited_indices.as_slice(), &[0, 1, 2, 3, 4, 5, 6, 7]);
     }
 
     #[test]
@@ -949,7 +973,11 @@ mod test {
 
         let root_coords = IVec3::new(1, 1, 1);
         let (root_ptr, _) = tree.insert_root(root_coords, ());
-        tree.fill_descendants(root_ptr, root_coords, |_child_ptr, _child_coords| Some(()));
+        tree.fill_descendants(
+            root_ptr,
+            root_coords,
+            |_child_ptr, _child_coords, _state| Some(()),
+        );
 
         let mut visited_lvl0 = SmallKeyHashMap::new();
         tree.visit_tree_depth_first(root_ptr, root_coords, |child_ptr, child_coords| {
