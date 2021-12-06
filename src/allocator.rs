@@ -2,8 +2,11 @@ use crate::ChildIndex;
 
 use slab::Slab;
 
-/// Allocates `T` values and blocks of `CHILDREN` [`AllocPtr`]s at a time. One [`AllocPtr`] corresponds to a single node at the
-/// given [`Level`](crate::Level).
+/// Allocate branch or leaf nodes.
+///
+/// One [`AllocPtr`] corresponds to a single node at the given [`Level`](crate::Level). Branches always have children pointers,
+/// although they may be [`EMPTY_PTR`]. Leaves do not allocate child pointers. For a given [`Level`](crate::Level), only one
+/// type of node should be allocated. Level 0 is only leaves and all other levels are only branches.
 #[derive(Clone, Debug)]
 pub struct NodeAllocator<T, const CHILDREN: usize> {
     /// A slab of pointer blocks. Empty at level 0.
