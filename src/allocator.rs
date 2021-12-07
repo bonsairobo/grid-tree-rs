@@ -5,7 +5,7 @@ use slab::Slab;
 /// Allocate branch or leaf nodes.
 ///
 /// One [`AllocPtr`] corresponds to a single node at the given [`Level`](crate::Level). Branches always have children pointers,
-/// although they may be [`EMPTY_PTR`]. Leaves do not allocate child pointers. For a given [`Level`](crate::Level), only one
+/// although they may be [`EMPTY_ALLOC_PTR`]. Leaves do not allocate child pointers. For a given [`Level`](crate::Level), only one
 /// type of node should be allocated. Level 0 is only leaves and all other levels are only branches.
 #[derive(Clone, Debug)]
 pub struct NodeAllocator<T, const CHILDREN: usize> {
@@ -19,7 +19,7 @@ pub struct NodeAllocator<T, const CHILDREN: usize> {
 pub type AllocPtr = u32;
 
 /// An [`AllocPtr`] that doesn't point to anything.
-pub const EMPTY_PTR: AllocPtr = AllocPtr::MAX;
+pub const EMPTY_ALLOC_PTR: AllocPtr = AllocPtr::MAX;
 
 impl<T, const CHILDREN: usize> Default for NodeAllocator<T, CHILDREN> {
     fn default() -> Self {
@@ -42,7 +42,10 @@ impl<T, const CHILDREN: usize> NodeAllocator<T, CHILDREN> {
         let pointer_entry = self.pointers.vacant_entry();
         debug_assert_eq!(ptr, pointer_entry.key());
 
-        (ptr as AllocPtr, pointer_entry.insert([EMPTY_PTR; CHILDREN]))
+        (
+            ptr as AllocPtr,
+            pointer_entry.insert([EMPTY_ALLOC_PTR; CHILDREN]),
+        )
     }
 
     #[inline]
@@ -52,7 +55,7 @@ impl<T, const CHILDREN: usize> NodeAllocator<T, CHILDREN> {
 
     #[inline]
     pub fn insert_pointers(&mut self) -> AllocPtr {
-        self.pointers.insert([EMPTY_PTR; CHILDREN]) as AllocPtr
+        self.pointers.insert([EMPTY_ALLOC_PTR; CHILDREN]) as AllocPtr
     }
 
     #[inline]
@@ -121,6 +124,6 @@ impl<T, const CHILDREN: usize> NodeAllocator<T, CHILDREN> {
 
     #[inline]
     pub fn unlink_child(&mut self, parent_ptr: AllocPtr, child_index: ChildIndex) {
-        self.set_child_pointer(parent_ptr, child_index, EMPTY_PTR)
+        self.set_child_pointer(parent_ptr, child_index, EMPTY_ALLOC_PTR)
     }
 }
