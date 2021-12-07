@@ -397,12 +397,14 @@ where
         &mut self,
         ancestor_ptr: NodePtr,
         ancestor_coordinates: V,
+        min_level: Level,
         mut filler: impl FnMut(NodePtr, V, SlotState) -> FillCommand<T>,
     ) {
+        assert!(min_level < ancestor_ptr.level());
         let mut stack = SmallVec::<[(NodePtr, V); 32]>::new();
         stack.push((ancestor_ptr, ancestor_coordinates));
         while let Some((parent_ptr, parent_coords)) = stack.pop() {
-            let has_grandchildren = parent_ptr.level > 1;
+            let has_grandchildren = parent_ptr.level > min_level + 1;
             self.fill_children(parent_ptr, |child_ptr, child_index, node_state| {
                 let child_coords = parent_coords + S::delinearize_child(child_index);
                 let command = filler(child_ptr, child_coords, node_state);
@@ -1151,6 +1153,7 @@ mod test {
         tree.fill_descendants(
             root_ptr,
             root_coords,
+            0,
             |_child_ptr, _child_coords, _state| FillCommand::Write((), VisitCommand::Continue),
         );
 
