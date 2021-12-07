@@ -84,10 +84,12 @@ impl<T, const CHILDREN: usize> NodeAllocator<T, CHILDREN> {
 
     #[inline]
     pub fn get_children_mut_or_panic(&mut self, ptr: AllocPtr) -> &mut [AllocPtr; CHILDREN] {
-        self.get_children_mut(ptr).expect(&format!(
-            "Tried inserting children of {:?} which has no child pointers",
-            ptr,
-        ))
+        self.get_children_mut(ptr).unwrap_or_else(|| {
+            panic!(
+                "Tried inserting children of {:?} which has no child pointers",
+                ptr,
+            )
+        })
     }
 
     #[inline]
