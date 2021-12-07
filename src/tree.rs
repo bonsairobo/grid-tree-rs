@@ -33,7 +33,7 @@ impl NodePtr {
         alloc_ptr: EMPTY_ALLOC_PTR,
     };
 
-    pub(crate) fn new(level: Level, alloc_ptr: AllocPtr) -> Self {
+    pub fn new(level: Level, alloc_ptr: AllocPtr) -> Self {
         Self { level, alloc_ptr }
     }
 
