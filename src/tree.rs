@@ -444,7 +444,6 @@ where
                     S::linearize_child(ancestor_coords - S::min_child_key(parent_coords));
 
                 let mut stop_early = false;
-                println!("FILLING CHILD {:?} w/ parent {:?}", child_index, parent_ptr);
                 self.fill_child(parent_ptr, child_index, |child_ptr, state| {
                     let command = filler(child_ptr, ancestor_coords, state);
                     parent_ptr = child_ptr;
