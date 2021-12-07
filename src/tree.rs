@@ -243,10 +243,13 @@ where
         child_value: T,
     ) -> (NodePtr, Option<T>) {
         assert!(parent_ptr.level > 0);
+
+        let [parent_alloc, child_alloc] =
+            Self::parent_and_child_allocators_mut(&mut self.allocators, parent_ptr.level)
+                .unwrap_or_else(|| {
+                    panic!("Tried inserting child of invalid parent: {:?}", parent_ptr)
+                });
         let child_level = parent_ptr.level - 1;
-        let (left, right) = self.allocators.split_at_mut(parent_ptr.level as usize);
-        let child_alloc = left.last_mut().unwrap();
-        let parent_alloc = right.first_mut().unwrap();
 
         let mut old_value = None;
         let children = parent_alloc.get_children_mut_or_panic(parent_ptr.alloc_ptr);
