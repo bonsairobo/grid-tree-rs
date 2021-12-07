@@ -595,6 +595,7 @@ where
         &self,
         ancestor_ptr: NodePtr,
         ancestor_coordinates: V,
+        min_level: Level,
         mut visitor: impl FnMut(NodePtr, V) -> VisitCommand,
     ) {
         let mut stack = SmallVec::<[(NodePtr, V); 32]>::new();
@@ -602,13 +603,15 @@ where
         while let Some((parent_ptr, parent_coords)) = stack.pop() {
             let command = visitor(parent_ptr, parent_coords);
             if let VisitCommand::Continue = command {
-                self.visit_children_with_coordinates(
-                    parent_ptr,
-                    parent_coords,
-                    |child_ptr, child_coords| {
-                        stack.push((child_ptr, child_coords));
-                    },
-                );
+                if parent_ptr.level > min_level {
+                    self.visit_children_with_coordinates(
+                        parent_ptr,
+                        parent_coords,
+                        |child_ptr, child_coords| {
+                            stack.push((child_ptr, child_coords));
+                        },
+                    );
+                }
             }
         }
     }
@@ -621,6 +624,7 @@ where
         &self,
         ancestor_ptr: NodePtr,
         ancestor_coordinates: V,
+        min_level: Level,
         mut visitor: impl FnMut(NodePtr, V) -> VisitCommand,
     ) {
         let mut queue = VecDeque::new();
@@ -628,13 +632,15 @@ where
         while let Some((parent_ptr, parent_coords)) = queue.pop_front() {
             let command = visitor(parent_ptr, parent_coords);
             if command == VisitCommand::Continue {
-                self.visit_children_with_coordinates(
-                    parent_ptr,
-                    parent_coords,
-                    |child_ptr, child_coords| {
-                        queue.push_back((child_ptr, child_coords));
-                    },
-                );
+                if parent_ptr.level > min_level {
+                    self.visit_children_with_coordinates(
+                        parent_ptr,
+                        parent_coords,
+                        |child_ptr, child_coords| {
+                            queue.push_back((child_ptr, child_coords));
+                        },
+                    );
+                }
             }
         }
     }
@@ -979,7 +985,7 @@ mod test {
         let (grandchild2_ptr, _) = tree.insert_child_at_offset(child2_ptr, IVec3::new(0, 0, 0), ());
 
         let mut visited = Vec::new();
-        tree.visit_tree_depth_first(root_ptr, root_coords, |child_ptr, child_coords| {
+        tree.visit_tree_depth_first(root_ptr, root_coords, 0, |child_ptr, child_coords| {
             visited.push((child_coords, child_ptr));
             VisitCommand::Continue
         });
@@ -995,7 +1001,7 @@ mod test {
         );
 
         let mut visited = Vec::new();
-        tree.visit_tree_breadth_first(root_ptr, root_coords, |child_ptr, child_coords| {
+        tree.visit_tree_breadth_first(root_ptr, root_coords, 0, |child_ptr, child_coords| {
             visited.push((child_coords, child_ptr));
             VisitCommand::Continue
         });
@@ -1034,7 +1040,7 @@ mod test {
         assert!(!tree.contains_node(grandchild1_ptr));
 
         let mut visited = Vec::new();
-        tree.visit_tree_breadth_first(root_ptr, root_coords, |ptr, coords| {
+        tree.visit_tree_breadth_first(root_ptr, root_coords, 0, |ptr, coords| {
             visited.push((ptr, coords));
             VisitCommand::Continue
         });
@@ -1096,7 +1102,7 @@ mod test {
         assert!(!tree.contains_node(grandchild1_ptr));
 
         let mut visited = Vec::new();
-        tree.visit_tree_breadth_first(root_ptr, root_coords, |ptr, coords| {
+        tree.visit_tree_breadth_first(root_ptr, root_coords, 0, |ptr, coords| {
             visited.push((ptr, coords));
             VisitCommand::Continue
         });
@@ -1158,7 +1164,7 @@ mod test {
         );
 
         let mut visited_lvl0 = SmallKeyHashMap::new();
-        tree.visit_tree_depth_first(root_ptr, root_coords, |child_ptr, child_coords| {
+        tree.visit_tree_depth_first(root_ptr, root_coords, 0, |child_ptr, child_coords| {
             if child_ptr.level() == 0 && child_coords % 2 == IVec3::ZERO {
                 visited_lvl0.insert(child_coords, child_ptr);
             }
