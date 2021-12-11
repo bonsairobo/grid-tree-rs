@@ -2,8 +2,11 @@ use crate::ChildIndex;
 
 use slab::Slab;
 
-/// Allocates `T` values and blocks of `CHILDREN` [`AllocPtr`]s at a time. One [`AllocPtr`] corresponds to a single node at the
-/// given [`Level`](crate::Level).
+/// Allocate branch or leaf nodes.
+///
+/// One [`AllocPtr`] corresponds to a single node at the given [`Level`](crate::Level). Branches always have children pointers,
+/// although they may be [`EMPTY_ALLOC_PTR`]. Leaves do not allocate child pointers. For a given [`Level`](crate::Level), only one
+/// type of node should be allocated. Level 0 is only leaves and all other levels are only branches.
 #[derive(Clone, Debug)]
 pub struct NodeAllocator<T, const CHILDREN: usize> {
     /// A slab of pointer blocks. Empty at level 0.
@@ -16,7 +19,7 @@ pub struct NodeAllocator<T, const CHILDREN: usize> {
 pub type AllocPtr = u32;
 
 /// An [`AllocPtr`] that doesn't point to anything.
-pub const EMPTY_PTR: AllocPtr = AllocPtr::MAX;
+pub const EMPTY_ALLOC_PTR: AllocPtr = AllocPtr::MAX;
 
 impl<T, const CHILDREN: usize> Default for NodeAllocator<T, CHILDREN> {
     fn default() -> Self {
@@ -39,7 +42,20 @@ impl<T, const CHILDREN: usize> NodeAllocator<T, CHILDREN> {
         let pointer_entry = self.pointers.vacant_entry();
         debug_assert_eq!(ptr, pointer_entry.key());
 
-        (ptr as AllocPtr, pointer_entry.insert([EMPTY_PTR; CHILDREN]))
+        (
+            ptr as AllocPtr,
+            pointer_entry.insert([EMPTY_ALLOC_PTR; CHILDREN]),
+        )
+    }
+
+    #[inline]
+    pub fn vacant_value_entry(&mut self) -> slab::VacantEntry<'_, T> {
+        self.values.vacant_entry()
+    }
+
+    #[inline]
+    pub fn insert_pointers(&mut self) -> AllocPtr {
+        self.pointers.insert([EMPTY_ALLOC_PTR; CHILDREN]) as AllocPtr
     }
 
     #[inline]
@@ -67,6 +83,16 @@ impl<T, const CHILDREN: usize> NodeAllocator<T, CHILDREN> {
     }
 
     #[inline]
+    pub fn get_children_mut_or_panic(&mut self, ptr: AllocPtr) -> &mut [AllocPtr; CHILDREN] {
+        self.get_children_mut(ptr).unwrap_or_else(|| {
+            panic!(
+                "Tried inserting children of {:?} which has no child pointers",
+                ptr,
+            )
+        })
+    }
+
+    #[inline]
     pub fn get_value(&self, ptr: AllocPtr) -> Option<&T> {
         self.values.get(ptr as usize)
     }
@@ -87,9 +113,19 @@ impl<T, const CHILDREN: usize> NodeAllocator<T, CHILDREN> {
     }
 
     #[inline]
-    pub fn unlink_child(&mut self, parent_ptr: AllocPtr, child_index: ChildIndex) {
-        if let Some(children) = self.pointers.get_mut(parent_ptr as usize) {
-            children[child_index as usize] = EMPTY_PTR;
+    pub fn set_child_pointer(
+        &mut self,
+        parent_ptr: AllocPtr,
+        child_index: ChildIndex,
+        child_ptr: AllocPtr,
+    ) {
+        if let Some(children) = self.get_children_mut(parent_ptr) {
+            children[child_index as usize] = child_ptr;
         }
+    }
+
+    #[inline]
+    pub fn unlink_child(&mut self, parent_ptr: AllocPtr, child_index: ChildIndex) {
+        self.set_child_pointer(parent_ptr, child_index, EMPTY_ALLOC_PTR)
     }
 }
