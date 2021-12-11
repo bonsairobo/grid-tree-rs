@@ -85,6 +85,9 @@ where
     V: VectorKey,
     S: BranchShape<V>,
 {
+    /// The maximum number of children a branch node can have. 4 for a quadtree and 8 for an octree.
+    pub const CHILDREN: ChildIndex = CHILDREN as ChildIndex;
+
     /// This constructor is only necessary if you need to use a custom shape `S` or vector `V`. Otherwise use the constructor
     /// for [`OctreeI32`](crate::OctreeI32) or [`QuadtreeI32`](crate::QuadtreeI32).
     ///
