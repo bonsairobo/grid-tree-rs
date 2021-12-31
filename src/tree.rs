@@ -3,11 +3,12 @@ use crate::{BranchShape, ChildIndex, Level, SmallKeyHashMap, VectorKey};
 
 use smallvec::SmallVec;
 use std::collections::{hash_map, VecDeque};
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::mem;
 
 /// Uniquely identifies a node slot in the [`Tree`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct NodeKey<V> {
     pub level: Level,
     pub coordinates: V,
@@ -85,13 +86,33 @@ impl<'a, const CHILDREN: usize> ChildPointers<'a, CHILDREN> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RootNode {
+    pub self_ptr: AllocPtr,
+    /// Roots may optionally point back to a node in some other [`Tree`]'s allocator.
+    pub parent_ptr: Option<AllocPtr>,
+}
+
+impl RootNode {
+    pub fn new(self_ptr: AllocPtr, parent_ptr: Option<AllocPtr>) -> Self {
+        Self {
+            self_ptr,
+            parent_ptr,
+        }
+    }
+
+    pub fn new_without_parent(self_ptr: AllocPtr) -> Self {
+        Self::new(self_ptr, None)
+    }
+}
+
 /// A generic "grid tree" which can be either a quadtree or an octree depending on the type parameters.
 #[derive(Clone, Debug)]
 pub struct Tree<V, S, T, const CHILDREN: usize> {
     /// 2x2 square in 2D or 2x2x2 cube in 3D.
     branch_shape: PhantomData<S>,
     /// Every node at the highest LOD is a root.
-    root_nodes: SmallKeyHashMap<V, AllocPtr>,
+    root_nodes: SmallKeyHashMap<NodeKey<V>, RootNode>,
     /// An allocator for each level.
     allocators: Vec<NodeAllocator<T, CHILDREN>>,
 }
@@ -99,6 +120,7 @@ pub struct Tree<V, S, T, const CHILDREN: usize> {
 impl<V, S, T, const CHILDREN: usize> Tree<V, S, T, CHILDREN>
 where
     V: VectorKey,
+    NodeKey<V>: Hash,
     S: BranchShape<V>,
 {
     /// The maximum number of children a branch node can have. 4 for a quadtree and 8 for an octree.
@@ -145,11 +167,8 @@ where
     }
 
     /// Iterate over all root nodes.
-    pub fn iter_roots(&self) -> impl Iterator<Item = (NodePtr, V)> + '_ {
-        let root_level = self.root_level();
-        self.root_nodes
-            .iter()
-            .map(move |(&coordinates, &ptr)| (NodePtr::new(root_level, ptr), coordinates))
+    pub fn iter_roots(&self) -> impl Iterator<Item = (&NodeKey<V>, &RootNode)> {
+        self.root_nodes.iter()
     }
 
     /// Returns true iff this tree contains a node for `ptr`.
@@ -160,8 +179,8 @@ where
 
     /// Returns true iff this tree contains a root node at `coords`.
     #[inline]
-    pub fn contains_root(&self, coordinates: V) -> bool {
-        self.root_nodes.contains_key(&coordinates)
+    pub fn contains_root(&self, key: NodeKey<V>) -> bool {
+        self.root_nodes.contains_key(&key)
     }
 
     #[inline]
@@ -191,48 +210,55 @@ where
             .get_value_unchecked_mut(ptr.alloc_ptr)
     }
 
-    /// Inserts `value` at the root node at `coords`. Returns the old value.
+    /// Inserts `value` at the root node at `key`. Returns the old value.
     #[inline]
-    pub fn insert_root(&mut self, coordinates: V, new_value: T) -> (NodePtr, Option<T>) {
-        let level = self.root_level();
+    pub fn insert_root(
+        &mut self,
+        key: NodeKey<V>,
+        parent_ptr: Option<AllocPtr>,
+        new_value: T,
+    ) -> (RootNode, Option<T>) {
         let Self {
             root_nodes,
             allocators,
             ..
         } = self;
         let mut old_value = None;
-        let alloc = &mut allocators[level as usize];
-        let root_ptr = match root_nodes.entry(coordinates) {
+        let alloc = &mut allocators[key.level as usize];
+        let root_node = match root_nodes.entry(key) {
             hash_map::Entry::Occupied(occupied) => {
-                let root_ptr = *occupied.get();
-                let current_value = unsafe { alloc.get_value_unchecked_mut(root_ptr) };
+                let root_node = *occupied.get();
+                let current_value = unsafe { alloc.get_value_unchecked_mut(root_node.self_ptr) };
                 old_value = Some(mem::replace(current_value, new_value));
-                root_ptr
+                root_node
             }
             hash_map::Entry::Vacant(vacant) => {
                 let (root_ptr, _children) = alloc.insert_branch(new_value);
-                vacant.insert(root_ptr);
-                root_ptr
+                let node = RootNode::new(root_ptr, parent_ptr);
+                vacant.insert(node);
+                node
             }
         };
-        (NodePtr::new(level, root_ptr), old_value)
+        (root_node, old_value)
     }
 
     /// Gets the root pointer or calls `filler` to insert a value first.
     #[inline]
-    pub fn get_or_create_root(&mut self, coordinates: V, mut filler: impl FnMut() -> T) -> NodePtr {
-        let level = self.root_level();
+    pub fn get_or_create_root(
+        &mut self,
+        key: NodeKey<V>,
+        mut filler: impl FnMut() -> T,
+    ) -> RootNode {
         let Self {
             root_nodes,
             allocators,
             ..
         } = self;
-        let alloc = &mut allocators[level as usize];
-        let root_ptr = *root_nodes.entry(coordinates).or_insert_with(|| {
+        let alloc = &mut allocators[key.level as usize];
+        *root_nodes.entry(key).or_insert_with(|| {
             let (root_ptr, _children) = alloc.insert_branch(filler());
-            root_ptr
-        });
-        NodePtr::new(level, root_ptr)
+            RootNode::new_without_parent(root_ptr)
+        })
     }
 
     /// Inserts a child node of `parent_ptr` storing `child_value`. Returns the old child value if one exists.
@@ -282,29 +308,28 @@ where
         self.insert_child(parent_ptr, S::linearize_child(child_offset), child_value)
     }
 
-    /// May return the [`AllocPtr`] of the root for convenience.
+    /// May return the [`RootNode`] for convenience.
     #[inline]
     pub fn fill_root(
         &mut self,
-        coordinates: V,
+        key: NodeKey<V>,
         mut filler: impl FnMut(AllocPtr, SlotState) -> FillCommand<T>,
-    ) -> FillCommand<AllocPtr> {
-        let root_level = self.root_level();
+    ) -> FillCommand<RootNode> {
         let Self {
             allocators,
             root_nodes,
             ..
         } = self;
-        let root_alloc = &mut allocators[root_level as usize];
+        let root_alloc = &mut allocators[key.level as usize];
 
-        match root_nodes.entry(coordinates) {
+        match root_nodes.entry(key) {
             hash_map::Entry::Occupied(occupied_ptr) => {
-                let alloc_ptr = *occupied_ptr.get();
-                let command = filler(alloc_ptr, SlotState::Occupied);
+                let root_node = *occupied_ptr.get();
+                let command = filler(root_node.self_ptr, SlotState::Occupied);
                 command.map(|new_value| {
-                    let value = unsafe { root_alloc.get_value_unchecked_mut(alloc_ptr) };
+                    let value = unsafe { root_alloc.get_value_unchecked_mut(root_node.self_ptr) };
                     *value = new_value;
-                    alloc_ptr
+                    root_node
                 })
             }
             hash_map::Entry::Vacant(vacant_ptr) => {
@@ -312,14 +337,15 @@ where
                 let alloc_ptr = value_entry.key() as AllocPtr;
                 let command = filler(alloc_ptr, SlotState::Vacant);
                 let mut take_new_value = None;
+                let root_node = RootNode::new_without_parent(alloc_ptr);
                 let ret = command.map(|new_value| {
                     take_new_value = Some(new_value);
-                    alloc_ptr
+                    root_node
                 });
                 if let Some(new_value) = take_new_value {
                     value_entry.insert(new_value);
-                    vacant_ptr.insert(alloc_ptr);
-                    if root_level > 0 {
+                    vacant_ptr.insert(root_node);
+                    if key.level > 0 {
                         // HACK
                         root_alloc.insert_pointers();
                     }
@@ -431,7 +457,7 @@ where
     ) {
         // We need to start from the top to avoid allocating nodes that already exist.
         let root_key = self.ancestor_root_key(target_key);
-        let root_fill_result = self.fill_root(root_key.coordinates, |root_ptr, state| {
+        let root_fill_result = self.fill_root(root_key, |root_ptr, state| {
             filler(
                 NodePtr::new(root_key.level, root_ptr),
                 root_key.coordinates,
@@ -439,8 +465,8 @@ where
             )
         });
 
-        if let FillCommand::Write(root_ptr, VisitCommand::Continue) = root_fill_result {
-            let mut parent_ptr = NodePtr::new(root_key.level, root_ptr);
+        if let FillCommand::Write(root_node, VisitCommand::Continue) = root_fill_result {
+            let mut parent_ptr = NodePtr::new(root_key.level, root_node.self_ptr);
             let mut parent_coords = root_key.coordinates;
             for child_level in (target_key.level..root_key.level).rev() {
                 // Get the child index of the ancestor at this level.
@@ -474,13 +500,10 @@ where
         }
     }
 
-    /// Looks up the root pointer for `coords` in the top-level hash map.
+    /// Looks up the root pointer for `key` in the top-level hash map.
     #[inline]
-    pub fn find_root(&self, coordinates: V) -> Option<NodePtr> {
-        self.root_nodes.get(&coordinates).map(|&ptr| NodePtr {
-            level: self.root_level(),
-            alloc_ptr: ptr,
-        })
+    pub fn find_root(&self, key: NodeKey<V>) -> Option<RootNode> {
+        self.root_nodes.get(&key).cloned()
     }
 
     /// Starting from the ancestor root, searches for the corresponding descendant node at `key`.
@@ -490,15 +513,19 @@ where
     #[inline]
     pub fn find_node(&self, key: NodeKey<V>) -> Option<ChildRelation<V>> {
         if key.level == self.root_level() {
-            self.find_root(key.coordinates)
-                .map(|root_ptr| ChildRelation {
-                    child: root_ptr,
-                    parent: None,
-                })
+            self.find_root(key).map(|root_node| ChildRelation {
+                child: NodePtr::new(key.level, root_node.self_ptr),
+                parent: None,
+            })
         } else {
-            let root_coords = self.ancestor_root_key(key).coordinates;
-            self.find_root(root_coords)
-                .and_then(|root_ptr| self.find_descendant(root_ptr, root_coords, key))
+            let root_key = self.ancestor_root_key(key);
+            self.find_root(root_key).and_then(|root_node| {
+                self.find_descendant(
+                    NodePtr::new(root_key.level, root_node.self_ptr),
+                    root_key.coordinates,
+                    key,
+                )
+            })
         }
     }
 
@@ -509,7 +536,12 @@ where
         ancestor_coordinates: V,
         descendant_key: NodeKey<V>,
     ) -> Option<ChildRelation<V>> {
-        assert!(ancestor_ptr.level > descendant_key.level);
+        assert!(
+            ancestor_ptr.level > descendant_key.level,
+            "{} > {}",
+            ancestor_ptr.level,
+            descendant_key.level
+        );
         let level_diff = ancestor_ptr.level - descendant_key.level;
 
         self.child_pointers(ancestor_ptr).and_then(|children| {
@@ -762,9 +794,8 @@ where
 
     fn unlink_child(&mut self, relation: &ChildRelation<V>) {
         if let Some(parent) = relation.parent.as_ref() {
-            if parent.ptr.level == self.root_level() {
-                self.root_nodes.remove(&parent.coordinates);
-            }
+            self.root_nodes
+                .remove(&NodeKey::new(relation.child.level + 1, parent.coordinates));
             self.allocator_mut(parent.ptr.level)
                 .unlink_child(parent.ptr.alloc_ptr, parent.child_index);
         }
@@ -840,39 +871,44 @@ mod test {
     fn insert_root() {
         let mut tree = OctreeI32::new(3);
 
-        let key = IVec3::ZERO;
+        let key = NodeKey::new(2, IVec3::ZERO);
 
         assert_eq!(tree.find_root(key), None);
 
-        let (ptr, old_value) = tree.insert_root(key, "val1");
+        let (node, old_value) = tree.insert_root(key, None, "val1");
         assert_eq!(old_value, None);
-        assert!(tree.contains_node(ptr));
-        assert_eq!(tree.get_value(ptr), Some(&"val1"));
-        assert_eq!(tree.find_root(key), Some(ptr));
+        assert_eq!(node.parent_ptr, None);
+        let root_ptr = NodePtr::new(2, node.self_ptr);
+        assert!(tree.contains_node(root_ptr));
+        assert_eq!(tree.get_value(root_ptr), Some(&"val1"));
+        assert_eq!(tree.find_root(key), Some(node));
 
-        let (ptr, old_value) = tree.insert_root(key, "val2");
+        let (_node, old_value) = tree.insert_root(key, None, "val2");
         assert_eq!(old_value, Some("val1"));
-        assert!(tree.contains_node(ptr));
-        assert_eq!(tree.get_value(ptr), Some(&"val2"));
+        assert!(tree.contains_node(root_ptr));
+        assert_eq!(tree.get_value(root_ptr), Some(&"val2"));
     }
 
     #[test]
     fn get_or_create_root() {
         let mut tree = OctreeI32::new(3);
 
-        let ptr = tree.get_or_create_root(IVec3::ZERO, || ());
-        assert_eq!(ptr, tree.get_or_create_root(IVec3::ZERO, || ()));
+        let key = NodeKey::new(2, IVec3::ZERO);
 
-        let (ptr, _old_value) = tree.insert_root(IVec3::ONE, ());
-        assert_eq!(ptr, tree.get_or_create_root(IVec3::ONE, || ()));
+        let ptr = tree.get_or_create_root(key, || ());
+        assert_eq!(ptr, tree.get_or_create_root(key, || ()));
+
+        let (ptr, _old_value) = tree.insert_root(key, None, ());
+        assert_eq!(ptr, tree.get_or_create_root(key, || ()));
     }
 
     #[test]
     fn insert_child_of_root() {
         let mut tree = OctreeI32::new(3);
 
-        let root_key = IVec3::ZERO;
-        let (root_ptr, _) = tree.insert_root(root_key, "val1");
+        let root_key = NodeKey::new(2, IVec3::ZERO);
+        let (root_node, _) = tree.insert_root(root_key, None, "val1");
+        let root_ptr = NodePtr::new(2, root_node.self_ptr);
         let (child_ptr, old_val) = tree.insert_child(root_ptr, 0, "val2");
         assert_eq!(old_val, None);
         assert!(tree.contains_node(child_ptr));
@@ -883,14 +919,15 @@ mod test {
     fn find_descendant_none() {
         let mut tree = OctreeI32::new(3);
 
-        let root_coords = IVec3::ZERO;
-        let (root_ptr, _) = tree.insert_root(root_coords, ());
+        let root_key = NodeKey::new(2, IVec3::ZERO);
+        let (root_node, _) = tree.insert_root(root_key, None, ());
+        let root_ptr = NodePtr::new(2, root_node.self_ptr);
 
         let descendant_key = NodeKey {
             level: 1,
             coordinates: IVec3::ZERO,
         };
-        let found = tree.find_descendant(root_ptr, root_coords, descendant_key);
+        let found = tree.find_descendant(root_ptr, root_key.coordinates, descendant_key);
         assert_eq!(found, None);
         let found = tree.find_node(descendant_key);
         assert_eq!(found, None);
@@ -900,8 +937,9 @@ mod test {
     fn find_descendant_child() {
         let mut tree = OctreeI32::new(3);
 
-        let root_coords = IVec3::ZERO;
-        let (root_ptr, _) = tree.insert_root(root_coords, ());
+        let root_key = NodeKey::new(2, IVec3::ZERO);
+        let (root_node, _) = tree.insert_root(root_key, None, ());
+        let root_ptr = NodePtr::new(2, root_node.self_ptr);
 
         let child_key = NodeKey {
             level: 1,
@@ -917,7 +955,7 @@ mod test {
                 child_index: 7,
             }),
         });
-        let found = tree.find_descendant(root_ptr, root_coords, child_key);
+        let found = tree.find_descendant(root_ptr, root_key.coordinates, child_key);
         assert_eq!(found, expected_find);
         let found = tree.find_node(child_key);
         assert_eq!(found, expected_find);
@@ -927,8 +965,9 @@ mod test {
     fn find_descendant_grandchild() {
         let mut tree = OctreeI32::new(3);
 
-        let root_coords = IVec3::ZERO;
-        let (root_ptr, _) = tree.insert_root(root_coords, ());
+        let root_key = NodeKey::new(2, IVec3::ZERO);
+        let (root_node, _) = tree.insert_root(root_key, None, ());
+        let root_ptr = NodePtr::new(2, root_node.self_ptr);
 
         let grandchild_key = NodeKey {
             level: 0,
@@ -945,7 +984,7 @@ mod test {
                 child_index: 7,
             }),
         });
-        let found = tree.find_descendant(root_ptr, root_coords, grandchild_key);
+        let found = tree.find_descendant(root_ptr, root_key.coordinates, grandchild_key);
         assert_eq!(found, expected_find);
         let found = tree.find_node(grandchild_key);
         assert_eq!(found, expected_find);
@@ -955,15 +994,20 @@ mod test {
     fn visit_children_of_root() {
         let mut tree = OctreeI32::new(3);
 
-        let root_coords = IVec3::new(1, 1, 1);
-        let (root_ptr, _) = tree.insert_root(root_coords, ());
+        let root_key = NodeKey::new(2, IVec3::new(1, 1, 1));
+        let (root_node, _) = tree.insert_root(root_key, None, ());
+        let root_ptr = NodePtr::new(2, root_node.self_ptr);
         let (child1_ptr, _) = tree.insert_child_at_offset(root_ptr, IVec3::new(0, 0, 0), ());
         let (child2_ptr, _) = tree.insert_child_at_offset(root_ptr, IVec3::new(1, 1, 1), ());
 
         let mut visited = Vec::new();
-        tree.visit_children_with_coordinates(root_ptr, root_coords, |child_ptr, child_coords| {
-            visited.push((child_coords, child_ptr));
-        });
+        tree.visit_children_with_coordinates(
+            root_ptr,
+            root_key.coordinates,
+            |child_ptr, child_coords| {
+                visited.push((child_coords, child_ptr));
+            },
+        );
 
         assert_eq!(
             visited.as_slice(),
@@ -978,18 +1022,24 @@ mod test {
     fn visit_tree_of_root() {
         let mut tree = OctreeI32::new(3);
 
-        let root_coords = IVec3::new(1, 1, 1);
-        let (root_ptr, _) = tree.insert_root(root_coords, ());
+        let root_key = NodeKey::new(2, IVec3::new(1, 1, 1));
+        let (root_node, _) = tree.insert_root(root_key, None, ());
+        let root_ptr = NodePtr::new(2, root_node.self_ptr);
         let (child1_ptr, _) = tree.insert_child_at_offset(root_ptr, IVec3::new(0, 0, 0), ());
         let (child2_ptr, _) = tree.insert_child_at_offset(root_ptr, IVec3::new(1, 1, 1), ());
         let (grandchild1_ptr, _) = tree.insert_child_at_offset(child1_ptr, IVec3::new(1, 1, 1), ());
         let (grandchild2_ptr, _) = tree.insert_child_at_offset(child2_ptr, IVec3::new(0, 0, 0), ());
 
         let mut visited = Vec::new();
-        tree.visit_tree_depth_first(root_ptr, root_coords, 0, |child_ptr, child_coords| {
-            visited.push((child_coords, child_ptr));
-            VisitCommand::Continue
-        });
+        tree.visit_tree_depth_first(
+            root_ptr,
+            root_key.coordinates,
+            0,
+            |child_ptr, child_coords| {
+                visited.push((child_coords, child_ptr));
+                VisitCommand::Continue
+            },
+        );
         assert_eq!(
             visited.as_slice(),
             &[
@@ -1002,10 +1052,15 @@ mod test {
         );
 
         let mut visited = Vec::new();
-        tree.visit_tree_breadth_first(root_ptr, root_coords, 0, |child_ptr, child_coords| {
-            visited.push((child_coords, child_ptr));
-            VisitCommand::Continue
-        });
+        tree.visit_tree_breadth_first(
+            root_ptr,
+            root_key.coordinates,
+            0,
+            |child_ptr, child_coords| {
+                visited.push((child_coords, child_ptr));
+                VisitCommand::Continue
+            },
+        );
         assert_eq!(
             visited.as_slice(),
             &[
@@ -1022,8 +1077,9 @@ mod test {
     fn drop_tree() {
         let mut tree = OctreeI32::new(3);
 
-        let root_coords = IVec3::new(1, 1, 1);
-        let (root_ptr, _) = tree.insert_root(root_coords, ());
+        let root_key = NodeKey::new(2, IVec3::new(1, 1, 1));
+        let (root_node, _) = tree.insert_root(root_key, None, ());
+        let root_ptr = NodePtr::new(2, root_node.self_ptr);
         let (child1_ptr, _) = tree.insert_child_at_offset(root_ptr, IVec3::new(0, 0, 0), ());
         let (child2_ptr, _) = tree.insert_child_at_offset(root_ptr, IVec3::new(1, 1, 1), ());
         let (grandchild1_ptr, _) = tree.insert_child_at_offset(child1_ptr, IVec3::new(1, 1, 1), ());
@@ -1041,7 +1097,7 @@ mod test {
         assert!(!tree.contains_node(grandchild1_ptr));
 
         let mut visited = Vec::new();
-        tree.visit_tree_breadth_first(root_ptr, root_coords, 0, |ptr, coords| {
+        tree.visit_tree_breadth_first(root_ptr, root_key.coordinates, 0, |ptr, coords| {
             visited.push((ptr, coords));
             VisitCommand::Continue
         });
@@ -1049,7 +1105,7 @@ mod test {
         assert_eq!(
             visited.as_slice(),
             &[
-                (root_ptr, root_coords),
+                (root_ptr, root_key.coordinates),
                 (child2_ptr, IVec3::new(3, 3, 3)),
                 (grandchild2_ptr, IVec3::new(6, 6, 6))
             ]
@@ -1060,8 +1116,9 @@ mod test {
     fn remove_tree() {
         let mut tree = OctreeI32::new(3);
 
-        let root_coords = IVec3::new(1, 1, 1);
-        let (root_ptr, _) = tree.insert_root(root_coords, ());
+        let root_key = NodeKey::new(2, IVec3::new(1, 1, 1));
+        let (root_node, _) = tree.insert_root(root_key, None, ());
+        let root_ptr = NodePtr::new(2, root_node.self_ptr);
         let (child1_ptr, _) = tree.insert_child_at_offset(root_ptr, IVec3::new(0, 0, 0), ());
         let (child2_ptr, _) = tree.insert_child_at_offset(root_ptr, IVec3::new(1, 1, 1), ());
         let (grandchild1_ptr, _) = tree.insert_child_at_offset(child1_ptr, IVec3::new(1, 1, 1), ());
@@ -1103,7 +1160,7 @@ mod test {
         assert!(!tree.contains_node(grandchild1_ptr));
 
         let mut visited = Vec::new();
-        tree.visit_tree_breadth_first(root_ptr, root_coords, 0, |ptr, coords| {
+        tree.visit_tree_breadth_first(root_ptr, root_key.coordinates, 0, |ptr, coords| {
             visited.push((ptr, coords));
             VisitCommand::Continue
         });
@@ -1111,7 +1168,7 @@ mod test {
         assert_eq!(
             visited.as_slice(),
             &[
-                (root_ptr, root_coords),
+                (root_ptr, root_key.coordinates),
                 (child2_ptr, IVec3::new(3, 3, 3)),
                 (grandchild2_ptr, IVec3::new(6, 6, 6))
             ]
@@ -1122,8 +1179,9 @@ mod test {
     fn fill_some_children() {
         let mut tree = OctreeI32::new(3);
 
-        let root_coords = IVec3::new(1, 1, 1);
-        let (root_ptr, _) = tree.insert_root(root_coords, ());
+        let root_key = NodeKey::new(2, IVec3::new(1, 1, 1));
+        let (root_node, _) = tree.insert_root(root_key, None, ());
+        let root_ptr = NodePtr::new(2, root_node.self_ptr);
         tree.fill_children(root_ptr, |_child_ptr, child_index, _state| {
             (child_index % 2 == 0).then(|| ())
         });
@@ -1155,22 +1213,28 @@ mod test {
     fn fill_some_descendants() {
         let mut tree = OctreeI32::new(3);
 
-        let root_coords = IVec3::new(1, 1, 1);
-        let (root_ptr, _) = tree.insert_root(root_coords, ());
+        let root_key = NodeKey::new(2, IVec3::new(1, 1, 1));
+        let (root_node, _) = tree.insert_root(root_key, None, ());
+        let root_ptr = NodePtr::new(2, root_node.self_ptr);
         tree.fill_descendants(
             root_ptr,
-            root_coords,
+            root_key.coordinates,
             0,
             |_child_ptr, _child_coords, _state| FillCommand::Write((), VisitCommand::Continue),
         );
 
         let mut visited_lvl0 = SmallKeyHashMap::new();
-        tree.visit_tree_depth_first(root_ptr, root_coords, 0, |child_ptr, child_coords| {
-            if child_ptr.level() == 0 && child_coords % 2 == IVec3::ZERO {
-                visited_lvl0.insert(child_coords, child_ptr);
-            }
-            VisitCommand::Continue
-        });
+        tree.visit_tree_depth_first(
+            root_ptr,
+            root_key.coordinates,
+            0,
+            |child_ptr, child_coords| {
+                if child_ptr.level() == 0 && child_coords % 2 == IVec3::ZERO {
+                    visited_lvl0.insert(child_coords, child_ptr);
+                }
+                VisitCommand::Continue
+            },
+        );
 
         let mut expected_lvl0 = SmallKeyHashMap::new();
         for z in 4..8 {
@@ -1196,16 +1260,16 @@ mod test {
     fn fill_root() {
         let mut tree = OctreeI32::new(5);
 
-        let root_coords = IVec3::new(1, 1, 1);
+        let root_key = NodeKey::new(2, IVec3::new(1, 1, 1));
         let mut root_ptr = None;
-        tree.fill_root(IVec3::new(1, 1, 1), |ptr, state| {
+        tree.fill_root(root_key, |ptr, state| {
             root_ptr = Some(ptr);
             assert_eq!(state, SlotState::Vacant);
             FillCommand::Write((), VisitCommand::Continue)
         });
-        assert!(tree.contains_root(root_coords));
+        assert!(tree.contains_root(root_key));
         assert_eq!(
-            tree.find_root(root_coords).unwrap().alloc_ptr,
+            tree.find_root(root_key).unwrap().self_ptr,
             root_ptr.unwrap()
         );
     }
