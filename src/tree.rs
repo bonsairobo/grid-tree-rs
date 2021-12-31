@@ -39,6 +39,11 @@ impl NodePtr {
     }
 
     #[inline]
+    pub fn alloc_ptr(&self) -> AllocPtr {
+        self.alloc_ptr
+    }
+
+    #[inline]
     pub fn level(&self) -> Level {
         self.level
     }
