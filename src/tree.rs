@@ -171,6 +171,11 @@ where
         }
     }
 
+    /// Iterate over all root keys.
+    pub fn iter_root_keys(&self) -> impl Iterator<Item = &NodeKey<V>> {
+        self.root_nodes.keys()
+    }
+
     /// Iterate over all root nodes.
     pub fn iter_roots(&self) -> impl Iterator<Item = (&NodeKey<V>, &RootNode)> {
         self.root_nodes.iter()
