@@ -1147,7 +1147,8 @@ mod test {
         let (root_node, _) = tree.insert_root(root_key, None, ());
         let root_ptr = NodePtr::new(2, root_node.self_ptr);
         tree.fill_descendants(root_ptr, root_key.coordinates, 0, |_child_coords, entry| {
-            entry.or_insert_with(|| ());
+            let (ptr, &mut ()) = entry.or_insert_with(|| ());
+            assert_ne!(ptr, EMPTY_ALLOC_PTR);
             VisitCommand::Continue
         });
 
