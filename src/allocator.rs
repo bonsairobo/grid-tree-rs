@@ -49,16 +49,6 @@ impl<T, const CHILDREN: usize> NodeAllocator<T, CHILDREN> {
     }
 
     #[inline]
-    pub fn vacant_value_entry(&mut self) -> slab::VacantEntry<'_, T> {
-        self.values.vacant_entry()
-    }
-
-    #[inline]
-    pub fn insert_pointers(&mut self) -> AllocPtr {
-        self.pointers.insert([EMPTY_ALLOC_PTR; CHILDREN]) as AllocPtr
-    }
-
-    #[inline]
     pub fn remove(&mut self, ptr: AllocPtr) -> (Option<T>, Option<[AllocPtr; CHILDREN]>) {
         (
             self.values.try_remove(ptr as usize),

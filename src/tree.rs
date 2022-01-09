@@ -91,6 +91,63 @@ impl<'a, const CHILDREN: usize> ChildPointers<'a, CHILDREN> {
     }
 }
 
+pub enum NodeEntry<'a, T, const CHILDREN: usize> {
+    Occupied(OccupiedNodeEntry<'a, T, CHILDREN>),
+    Vacant(VacantNodeEntry<'a, T, CHILDREN>),
+}
+
+impl<'a, T, const CHILDREN: usize> NodeEntry<'a, T, CHILDREN> {
+    pub fn or_insert_with(&mut self, mut filler: impl FnMut() -> T) -> &mut T {
+        match self {
+            Self::Occupied(o) => o.get_mut(),
+            Self::Vacant(v) => {
+                let ptr = v.insert(filler());
+                unsafe { v.alloc.get_value_unchecked_mut(ptr) }
+            }
+        }
+    }
+
+    pub fn pointer(&self) -> AllocPtr {
+        // PERF: this extra branch seems unnecessary when both variants have a pointer
+        match self {
+            Self::Occupied(o) => o.ptr,
+            Self::Vacant(v) => *v.ptr,
+        }
+    }
+}
+
+pub struct OccupiedNodeEntry<'a, T, const CHILDREN: usize> {
+    alloc: &'a mut NodeAllocator<T, CHILDREN>,
+    ptr: AllocPtr,
+}
+
+impl<'a, T, const CHILDREN: usize> OccupiedNodeEntry<'a, T, CHILDREN> {
+    #[inline]
+    pub fn get_mut(&mut self) -> &mut T {
+        unsafe { self.alloc.get_value_unchecked_mut(self.ptr) }
+    }
+}
+
+pub struct VacantNodeEntry<'a, T, const CHILDREN: usize> {
+    alloc: &'a mut NodeAllocator<T, CHILDREN>,
+    ptr: &'a mut AllocPtr,
+    level: Level,
+}
+
+impl<'a, T, const CHILDREN: usize> VacantNodeEntry<'a, T, CHILDREN> {
+    #[inline]
+    pub fn insert(&mut self, value: T) -> AllocPtr {
+        let new_ptr = if self.level == 0 {
+            self.alloc.insert_leaf(value)
+        } else {
+            let (ptr, _child_pointers) = self.alloc.insert_branch(value);
+            ptr
+        };
+        *self.ptr = new_ptr;
+        new_ptr
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RootNode {
     pub self_ptr: AllocPtr,
@@ -323,8 +380,8 @@ where
     pub fn fill_root(
         &mut self,
         key: NodeKey<V>,
-        mut filler: impl FnMut(AllocPtr, SlotState) -> FillCommand<T>,
-    ) -> FillCommand<RootNode> {
+        mut filler: impl FnMut(&mut NodeEntry<'_, T, CHILDREN>) -> VisitCommand,
+    ) -> (Option<RootNode>, VisitCommand) {
         let Self {
             allocators,
             root_nodes,
@@ -333,96 +390,62 @@ where
         let root_alloc = &mut allocators[key.level as usize];
 
         match root_nodes.entry(key) {
-            hash_map::Entry::Occupied(occupied_ptr) => {
-                let root_node = *occupied_ptr.get();
-                let command = filler(root_node.self_ptr, SlotState::Occupied);
-                command.map(|new_value| {
-                    let value = unsafe { root_alloc.get_value_unchecked_mut(root_node.self_ptr) };
-                    *value = new_value;
-                    root_node
-                })
-            }
-            hash_map::Entry::Vacant(vacant_ptr) => {
-                let value_entry = root_alloc.vacant_value_entry();
-                let alloc_ptr = value_entry.key() as AllocPtr;
-                let command = filler(alloc_ptr, SlotState::Vacant);
-                let mut take_new_value = None;
-                let root_node = RootNode::new_without_parent(alloc_ptr);
-                let ret = command.map(|new_value| {
-                    take_new_value = Some(new_value);
-                    root_node
+            hash_map::Entry::Occupied(occupied_node) => {
+                let root_node = *occupied_node.get();
+                let mut entry = NodeEntry::Occupied(OccupiedNodeEntry {
+                    alloc: root_alloc,
+                    ptr: root_node.self_ptr,
                 });
-                if let Some(new_value) = take_new_value {
-                    value_entry.insert(new_value);
-                    vacant_ptr.insert(root_node);
-                    if key.level > 0 {
-                        // HACK
-                        root_alloc.insert_pointers();
-                    }
+                (Some(root_node), filler(&mut entry))
+            }
+            hash_map::Entry::Vacant(vacant_node) => {
+                let mut new_ptr = EMPTY_ALLOC_PTR;
+                let mut entry = NodeEntry::Vacant(VacantNodeEntry {
+                    alloc: root_alloc,
+                    ptr: &mut new_ptr,
+                    level: key.level,
+                });
+                let command = filler(&mut entry);
+                if new_ptr == EMPTY_ALLOC_PTR {
+                    (None, command)
+                } else {
+                    let root_node = RootNode::new_without_parent(new_ptr);
+                    vacant_node.insert(root_node);
+                    (Some(root_node), command)
                 }
-                ret
             }
         }
     }
 
-    /// Inserts `filler()` in the given child of `parent_ptr` where `filler` returns `Some` data.
+    /// # Panics
     ///
-    /// This does nothing if `parent_ptr.level() == 0`.
-    ///
-    /// If `filler` returns `None`, then the [`NodePtr`] passed in may become invalid if the node did not already exist.
-    /// This is necessary to allow callers to cache the pointers that they actually do fill.
-    ///
-    /// Old values are not preserved if they are overwritten.
+    /// - If `parent_ptr` is at level 0 and hence cannot have children.
+    /// - If no node exists for `parent_ptr`.
     #[inline]
-    pub fn fill_child(
+    pub fn child_entry(
         &mut self,
         parent_ptr: NodePtr,
         child_index: ChildIndex,
-        filler: impl FnMut(NodePtr, SlotState) -> Option<T>,
-    ) {
-        if let Some([parent_alloc, child_alloc]) =
+    ) -> NodeEntry<'_, T, CHILDREN> {
+        let [parent_alloc, child_alloc] =
             Self::parent_and_child_allocators_mut(&mut self.allocators, parent_ptr.level)
-        {
-            let child_level = parent_ptr.level - 1;
-            Self::fill_child_inner(
-                parent_alloc,
-                child_alloc,
-                parent_ptr.alloc_ptr,
-                child_level,
-                child_index,
-                filler,
-            )
-        }
-    }
+                .unwrap_or_else(|| {
+                    panic!("Tried getting child of invalid parent: {:?}", parent_ptr)
+                });
 
-    /// Inserts `filler()` in every child "slot" of `parent_ptr` where `filler` returns `Some` data.
-    ///
-    /// This does nothing if `parent_ptr.level() == 0`.
-    ///
-    /// If `filler` returns `None`, then the [`NodePtr`] passed in may become invalid if the node did not already exist.
-    /// This is necessary to allow callers to cache the pointers that they actually do fill.
-    ///
-    /// Old values are not preserved if they are overwritten.
-    #[inline]
-    pub fn fill_children(
-        &mut self,
-        parent_ptr: NodePtr,
-        mut filler: impl FnMut(NodePtr, ChildIndex, SlotState) -> Option<T>,
-    ) {
-        if let Some([parent_alloc, child_alloc]) =
-            Self::parent_and_child_allocators_mut(&mut self.allocators, parent_ptr.level)
-        {
-            let child_level = parent_ptr.level - 1;
-            for child_index in 0..Self::CHILDREN {
-                Self::fill_child_inner(
-                    parent_alloc,
-                    child_alloc,
-                    parent_ptr.alloc_ptr,
-                    child_level,
-                    child_index,
-                    |child_ptr, state| filler(child_ptr, child_index, state),
-                )
-            }
+        let children = parent_alloc.get_children_mut_or_panic(parent_ptr.alloc_ptr);
+        let child_ptr = &mut children[child_index as usize];
+        if *child_ptr == EMPTY_ALLOC_PTR {
+            NodeEntry::Vacant(VacantNodeEntry {
+                alloc: child_alloc,
+                ptr: child_ptr,
+                level: parent_ptr.level - 1,
+            })
+        } else {
+            NodeEntry::Occupied(OccupiedNodeEntry {
+                alloc: child_alloc,
+                ptr: *child_ptr,
+            })
         }
     }
 
@@ -435,27 +458,29 @@ where
         ancestor_ptr: NodePtr,
         ancestor_coordinates: V,
         min_level: Level,
-        mut filler: impl FnMut(NodePtr, V, SlotState) -> FillCommand<T>,
+        mut filler: impl FnMut(V, &mut NodeEntry<'_, T, CHILDREN>) -> VisitCommand,
     ) {
         assert!(min_level < ancestor_ptr.level());
         let mut stack = SmallVec::<[(NodePtr, V); 32]>::new();
         stack.push((ancestor_ptr, ancestor_coordinates));
         while let Some((parent_ptr, parent_coords)) = stack.pop() {
-            let has_grandchildren = parent_ptr.level > min_level + 1;
-            self.fill_children(parent_ptr, |child_ptr, child_index, node_state| {
-                let child_coords = parent_coords + S::delinearize_child(child_index);
-                let command = filler(child_ptr, child_coords, node_state);
-                if let FillCommand::Write(data, visit) = command {
-                    if let VisitCommand::Continue = visit {
+            if parent_ptr.level > 0 {
+                let has_grandchildren = parent_ptr.level > min_level + 1;
+                let child_level = parent_ptr.level - 1;
+                for child_index in 0..Self::CHILDREN {
+                    let child_coords = parent_coords + S::delinearize_child(child_index);
+                    let mut child_entry = self.child_entry(parent_ptr, child_index);
+                    let command = filler(child_coords, &mut child_entry);
+                    if let VisitCommand::Continue = command {
                         if has_grandchildren {
-                            stack.push((child_ptr, child_coords));
+                            let child_ptr = child_entry.pointer();
+                            if child_ptr != EMPTY_ALLOC_PTR {
+                                stack.push((NodePtr::new(child_level, child_ptr), child_coords));
+                            }
                         }
                     }
-                    Some(data)
-                } else {
-                    None
                 }
-            });
+            }
         }
     }
 
@@ -463,19 +488,14 @@ where
     pub fn fill_path_to_node(
         &mut self,
         target_key: NodeKey<V>,
-        mut filler: impl FnMut(NodePtr, V, SlotState) -> FillCommand<T>,
+        mut filler: impl FnMut(NodeKey<V>, &mut NodeEntry<'_, T, CHILDREN>) -> VisitCommand,
     ) {
         // We need to start from the top to avoid allocating nodes that already exist.
         let root_key = self.ancestor_root_key(target_key);
-        let root_fill_result = self.fill_root(root_key, |root_ptr, state| {
-            filler(
-                NodePtr::new(root_key.level, root_ptr),
-                root_key.coordinates,
-                state,
-            )
-        });
+        let (root_node, command) =
+            self.fill_root(root_key, |root_entry| filler(root_key, root_entry));
 
-        if let FillCommand::Write(root_node, VisitCommand::Continue) = root_fill_result {
+        if let (Some(root_node), VisitCommand::Continue) = (root_node, command) {
             let mut parent_ptr = NodePtr::new(root_key.level, root_node.self_ptr);
             let mut parent_coords = root_key.coordinates;
             for child_level in (target_key.level..root_key.level).rev() {
@@ -484,27 +504,18 @@ where
                 let ancestor_coords = S::ancestor_key(target_key.coordinates, level_diff as u32);
                 let child_index =
                     S::linearize_child(ancestor_coords - S::min_child_key(parent_coords));
-
-                let mut stop_early = false;
-                self.fill_child(parent_ptr, child_index, |child_ptr, state| {
-                    let command = filler(child_ptr, ancestor_coords, state);
-                    parent_ptr = child_ptr;
-                    match command {
-                        FillCommand::Write(data, visit) => {
-                            if let VisitCommand::SkipDescendants = visit {
-                                stop_early = true;
-                            }
-                            Some(data)
-                        }
-                        FillCommand::SkipDescendants => {
-                            stop_early = true;
-                            None
-                        }
-                    }
-                });
-                if stop_early {
+                let child_coords = parent_coords + S::delinearize_child(child_index);
+                let node_key = NodeKey::new(child_level, child_coords);
+                let mut child_entry = self.child_entry(parent_ptr, child_index);
+                let command = filler(node_key, &mut child_entry);
+                if command == VisitCommand::SkipDescendants {
                     break;
                 }
+                let child_ptr = child_entry.pointer();
+                if child_ptr == EMPTY_ALLOC_PTR {
+                    break;
+                }
+                parent_ptr = NodePtr::new(child_level, child_ptr);
                 parent_coords = ancestor_coords;
             }
         }
@@ -766,42 +777,6 @@ where
         }
     }
 
-    fn fill_child_inner(
-        parent_alloc: &mut NodeAllocator<T, CHILDREN>,
-        child_alloc: &mut NodeAllocator<T, CHILDREN>,
-        parent_ptr: AllocPtr,
-        child_level: Level,
-        child_index: ChildIndex,
-        mut filler: impl FnMut(NodePtr, SlotState) -> Option<T>,
-    ) {
-        let children = parent_alloc.get_children_mut_or_panic(parent_ptr);
-        let child_ptr = &mut children[child_index as usize];
-        if *child_ptr == EMPTY_ALLOC_PTR {
-            // We need to create a new value entry, which may or may not get filled.
-            let child_value_entry = child_alloc.vacant_value_entry();
-            let child_node_ptr = NodePtr::new(child_level, child_value_entry.key() as AllocPtr);
-            if let Some(new_value) = filler(child_node_ptr, SlotState::Vacant) {
-                *child_ptr = child_node_ptr.alloc_ptr;
-                child_value_entry.insert(new_value);
-                if child_level > 0 {
-                    // HACK: Sadly it's not easy to ask for two vacant entries from the allocator at once. So if this is a
-                    // branch, we sneakily insert its pointers here to maintain the invariant that all branches have child
-                    // pointers.
-                    child_alloc.insert_pointers();
-                }
-            } else {
-                // The child_value_entry is dropped here and the AllocPtr becomes invalid.
-            }
-        } else {
-            // We already have a value for this child, so we can just overwrite it.
-            let child_node_ptr = NodePtr::new(child_level, *child_ptr);
-            if let Some(new_value) = filler(child_node_ptr, SlotState::Occupied) {
-                let current_value = unsafe { child_alloc.get_value_unchecked_mut(*child_ptr) };
-                *current_value = new_value;
-            }
-        }
-    }
-
     fn unlink_child(&mut self, relation: &ChildRelation<V>) {
         if let Some(parent) = relation.parent.as_ref() {
             self.root_nodes
@@ -839,28 +814,6 @@ where
 pub enum VisitCommand {
     Continue,
     SkipDescendants,
-}
-
-/// It's possible to write a node and then stop iteration using `Write(data, VisitCommand::SkipDescendants)`, but it's not
-/// possible to have nodes without data, so failing to write implies skipping descendants.
-pub enum FillCommand<T> {
-    Write(T, VisitCommand),
-    SkipDescendants,
-}
-
-impl<T> FillCommand<T> {
-    pub fn map<S>(self, f: impl FnOnce(T) -> S) -> FillCommand<S> {
-        match self {
-            Self::Write(t, visit) => FillCommand::Write(f(t), visit),
-            Self::SkipDescendants => FillCommand::SkipDescendants,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SlotState {
-    Occupied,
-    Vacant,
 }
 
 // ████████╗███████╗███████╗████████╗
@@ -1186,52 +1139,16 @@ mod test {
     }
 
     #[test]
-    fn fill_some_children() {
-        let mut tree = OctreeI32::new(3);
-
-        let root_key = NodeKey::new(2, IVec3::new(1, 1, 1));
-        let (root_node, _) = tree.insert_root(root_key, None, ());
-        let root_ptr = NodePtr::new(2, root_node.self_ptr);
-        tree.fill_children(root_ptr, |_child_ptr, child_index, _state| {
-            (child_index % 2 == 0).then(|| ())
-        });
-
-        let mut visited_indices = Vec::new();
-        tree.visit_children(root_ptr, |_child_ptr, child_index| {
-            visited_indices.push(child_index);
-        });
-        assert_eq!(visited_indices.as_slice(), &[0, 2, 4, 6]);
-
-        tree.fill_children(root_ptr, |_child_ptr, child_index, state| {
-            if child_index % 2 == 0 {
-                assert_eq!(state, SlotState::Occupied);
-                None
-            } else {
-                assert_eq!(state, SlotState::Vacant);
-                Some(())
-            }
-        });
-
-        let mut visited_indices = Vec::new();
-        tree.visit_children(root_ptr, |_child_ptr, child_index| {
-            visited_indices.push(child_index);
-        });
-        assert_eq!(visited_indices.as_slice(), &[0, 1, 2, 3, 4, 5, 6, 7]);
-    }
-
-    #[test]
     fn fill_some_descendants() {
         let mut tree = OctreeI32::new(3);
 
         let root_key = NodeKey::new(2, IVec3::new(1, 1, 1));
         let (root_node, _) = tree.insert_root(root_key, None, ());
         let root_ptr = NodePtr::new(2, root_node.self_ptr);
-        tree.fill_descendants(
-            root_ptr,
-            root_key.coordinates,
-            0,
-            |_child_ptr, _child_coords, _state| FillCommand::Write((), VisitCommand::Continue),
-        );
+        tree.fill_descendants(root_ptr, root_key.coordinates, 0, |_child_coords, entry| {
+            entry.or_insert_with(|| ());
+            VisitCommand::Continue
+        });
 
         let mut visited_lvl0 = SmallKeyHashMap::new();
         tree.visit_tree_depth_first(
@@ -1271,17 +1188,19 @@ mod test {
         let mut tree = OctreeI32::new(5);
 
         let root_key = NodeKey::new(2, IVec3::new(1, 1, 1));
-        let mut root_ptr = None;
-        tree.fill_root(root_key, |ptr, state| {
-            root_ptr = Some(ptr);
-            assert_eq!(state, SlotState::Vacant);
-            FillCommand::Write((), VisitCommand::Continue)
+        let (root_node, _) = tree.fill_root(root_key, |entry| {
+            match entry {
+                NodeEntry::Occupied(_) => {
+                    panic!("Unexpected occupied entry");
+                }
+                NodeEntry::Vacant(v) => {
+                    v.insert(());
+                }
+            }
+            VisitCommand::Continue
         });
         assert!(tree.contains_root(root_key));
-        assert_eq!(
-            tree.find_root(root_key).unwrap().self_ptr,
-            root_ptr.unwrap()
-        );
+        assert_eq!(tree.find_root(root_key).unwrap(), root_node.unwrap());
     }
 
     #[test]
@@ -1290,10 +1209,17 @@ mod test {
 
         let target_key = NodeKey::new(1, IVec3::new(1, 1, 1));
         let mut path = Vec::new();
-        tree.fill_path_to_node(target_key, |ptr, coords, state| {
-            assert_eq!(state, SlotState::Vacant);
-            path.push((ptr, coords));
-            FillCommand::Write((), VisitCommand::Continue)
+        tree.fill_path_to_node(target_key, |key, entry| {
+            match entry {
+                NodeEntry::Occupied(_) => {
+                    panic!("Unexpected occupied entry");
+                }
+                NodeEntry::Vacant(v) => {
+                    let new_ptr = v.insert(());
+                    path.push((NodePtr::new(key.level, new_ptr), key.coordinates));
+                }
+            }
+            VisitCommand::Continue
         });
 
         assert_eq!(path.len(), 4);
