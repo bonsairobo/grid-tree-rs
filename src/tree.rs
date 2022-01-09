@@ -211,7 +211,7 @@ where
         self.height() - 1
     }
 
-    /// Returns the unique root that is an ancestor of `descendant_key`.
+    /// Returns the unique root at `self.root_level()` that is an ancestor of `descendant_key`.
     #[inline]
     pub fn ancestor_root_key(&self, descendant_key: NodeKey<V>) -> NodeKey<V> {
         assert!(descendant_key.level <= self.root_level());
