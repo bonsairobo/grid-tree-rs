@@ -332,29 +332,18 @@ where
         child_value: T,
     ) -> (NodePtr, Option<T>) {
         assert!(parent_ptr.level > 0);
-
-        let [parent_alloc, child_alloc] =
-            Self::parent_and_child_allocators_mut(&mut self.allocators, parent_ptr.level)
-                .unwrap_or_else(|| {
-                    panic!("Tried inserting child of invalid parent: {:?}", parent_ptr)
-                });
         let child_level = parent_ptr.level - 1;
-
-        let mut old_value = None;
-        let children = parent_alloc.get_children_mut_or_panic(parent_ptr.alloc_ptr);
-        let child_ptr = &mut children[child_index as usize];
-        if *child_ptr == EMPTY_ALLOC_PTR {
-            if child_level > 0 {
-                let (new_child_ptr, _) = child_alloc.insert_branch(child_value);
-                *child_ptr = new_child_ptr;
-            } else {
-                *child_ptr = child_alloc.insert_leaf(child_value);
+        match self.child_entry(parent_ptr, child_index) {
+            NodeEntry::Occupied(mut o) => {
+                let value = o.get_mut();
+                let old_value = mem::replace(value, child_value);
+                (NodePtr::new(child_level, o.ptr), Some(old_value))
             }
-        } else {
-            let current_value = unsafe { child_alloc.get_value_unchecked_mut(*child_ptr) };
-            old_value = Some(mem::replace(current_value, child_value));
+            NodeEntry::Vacant(mut v) => {
+                v.insert(child_value);
+                (NodePtr::new(child_level, *v.ptr), None)
+            }
         }
-        (NodePtr::new(child_level, *child_ptr), old_value)
     }
 
     /// Same as `insert_child` but `child_offset` is linearized into a [`ChildIndex`] based on the [`BranchShape`].
