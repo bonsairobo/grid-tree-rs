@@ -43,7 +43,7 @@ impl NodePtr {
         self.level
     }
 
-    /// Null pointers can only be gotten by manually calling `Tree::child_pointers`.
+    /// Null pointers are only used to indicate a child does not exist.
     #[inline]
     pub fn is_null(&self) -> bool {
         self.alloc_ptr == EMPTY_ALLOC_PTR
