@@ -359,6 +359,26 @@ where
         self.insert_child(parent_ptr, S::linearize_child(child_offset), child_value)
     }
 
+    /// Equivalent to calling `fill_root` and then `fill_descendants` of that root.
+    #[inline]
+    pub fn fill_tree_from_root(
+        &mut self,
+        root_key: NodeKey<V>,
+        min_level: Level,
+        mut filler: impl FnMut(NodeKey<V>, &mut NodeEntry<'_, T, CHILDREN>) -> VisitCommand,
+    ) {
+        if let (Some(root_node), VisitCommand::Continue) =
+            self.fill_root(root_key, |entry| filler(root_key, entry))
+        {
+            self.fill_descendants(
+                NodePtr::new(root_key.level, root_node.self_ptr),
+                root_key.coordinates,
+                min_level,
+                filler,
+            )
+        }
+    }
+
     /// May return the [`RootNode`] for convenience.
     #[inline]
     pub fn fill_root(
@@ -433,9 +453,9 @@ where
         }
     }
 
-    /// Inserts the data from `filler()` in every descendant "slot" of `ancestor_ptr` where `filler` returns `Some`.
+    /// Inserts data in descendant "slots" of `ancestor_ptr` using `filler()`.
     ///
-    /// Any node N is skipped if `predicate` returns false for any ancestor of N.
+    /// Any node N is skipped if `filler` returns [`VisitCommand::SkipDescendants`] for any ancestor of N.
     #[inline]
     pub fn fill_descendants(
         &mut self,
