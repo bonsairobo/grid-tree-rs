@@ -458,7 +458,7 @@ where
         ancestor_ptr: NodePtr,
         ancestor_coordinates: V,
         min_level: Level,
-        mut filler: impl FnMut(V, &mut NodeEntry<'_, T, CHILDREN>) -> VisitCommand,
+        mut filler: impl FnMut(NodeKey<V>, &mut NodeEntry<'_, T, CHILDREN>) -> VisitCommand,
     ) {
         assert!(min_level < ancestor_ptr.level());
         let mut stack = SmallVec::<[(NodePtr, V); 32]>::new();
@@ -468,9 +468,10 @@ where
                 let has_grandchildren = parent_ptr.level > min_level + 1;
                 let child_level = parent_ptr.level - 1;
                 for child_index in 0..Self::CHILDREN {
-                    let child_coords = parent_coords + S::delinearize_child(child_index);
                     let mut child_entry = self.child_entry(parent_ptr, child_index);
-                    let command = filler(child_coords, &mut child_entry);
+                    let child_coords = parent_coords + S::delinearize_child(child_index);
+                    let child_key = NodeKey::new(child_level, child_coords);
+                    let command = filler(child_key, &mut child_entry);
                     if let VisitCommand::Continue = command {
                         if has_grandchildren {
                             let child_ptr = child_entry.pointer();
