@@ -29,11 +29,6 @@ pub struct NodePtr {
 }
 
 impl NodePtr {
-    pub const NULL: Self = NodePtr {
-        level: 0,
-        alloc_ptr: EMPTY_ALLOC_PTR,
-    };
-
     pub fn new(level: Level, alloc_ptr: AllocPtr) -> Self {
         Self { level, alloc_ptr }
     }
