@@ -97,12 +97,12 @@ pub enum NodeEntry<'a, T, const CHILDREN: usize> {
 }
 
 impl<'a, T, const CHILDREN: usize> NodeEntry<'a, T, CHILDREN> {
-    pub fn or_insert_with(&mut self, mut filler: impl FnMut() -> T) -> &mut T {
+    pub fn or_insert_with(&mut self, mut filler: impl FnMut() -> T) -> (AllocPtr, &mut T) {
         match self {
-            Self::Occupied(o) => o.get_mut(),
+            Self::Occupied(o) => (o.ptr, o.get_mut()),
             Self::Vacant(v) => {
                 let ptr = v.insert(filler());
-                unsafe { v.alloc.get_value_unchecked_mut(ptr) }
+                (ptr, unsafe { v.alloc.get_value_unchecked_mut(ptr) })
             }
         }
     }
