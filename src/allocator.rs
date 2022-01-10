@@ -37,15 +37,12 @@ impl<T, const CHILDREN: usize> NodeAllocator<T, CHILDREN> {
     }
 
     #[inline]
-    pub fn insert_branch(&mut self, value: T) -> (AllocPtr, &mut [AllocPtr; CHILDREN]) {
+    pub fn insert_branch(&mut self, value: T) -> AllocPtr {
         let ptr = self.values.insert(value);
         let pointer_entry = self.pointers.vacant_entry();
         debug_assert_eq!(ptr, pointer_entry.key());
-
-        (
-            ptr as AllocPtr,
-            pointer_entry.insert([EMPTY_ALLOC_PTR; CHILDREN]),
-        )
+        pointer_entry.insert([EMPTY_ALLOC_PTR; CHILDREN]);
+        ptr as AllocPtr
     }
 
     #[inline]

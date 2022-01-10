@@ -135,8 +135,7 @@ impl<'a, T, const CHILDREN: usize> VacantNodeEntry<'a, T, CHILDREN> {
         let new_ptr = if self.level == 0 {
             self.alloc.insert_leaf(value)
         } else {
-            let (ptr, _child_pointers) = self.alloc.insert_branch(value);
-            ptr
+            self.alloc.insert_branch(value)
         };
         *self.ptr = new_ptr;
         new_ptr
@@ -295,7 +294,7 @@ where
                 root_node
             }
             hash_map::Entry::Vacant(vacant) => {
-                let (root_ptr, _children) = alloc.insert_branch(new_value);
+                let root_ptr = alloc.insert_branch(new_value);
                 let node = RootNode::new(root_ptr, parent_ptr);
                 vacant.insert(node);
                 node
@@ -318,7 +317,7 @@ where
         } = self;
         let alloc = &mut allocators[key.level as usize];
         *root_nodes.entry(key).or_insert_with(|| {
-            let (root_ptr, _children) = alloc.insert_branch(filler());
+            let root_ptr = alloc.insert_branch(filler());
             RootNode::new_without_parent(root_ptr)
         })
     }
