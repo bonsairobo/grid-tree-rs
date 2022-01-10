@@ -6,6 +6,21 @@
 //! voxel data with level-of-detail. The tree also requires that if a node slot is occupied (has data), then all ancestor slots
 //! are also filled.
 //!
+//! # Design Advantages
+//!
+//! - Since a [`Tree`](crate::Tree) has its own internal allocators, any pointers are completely local to the data structure. In
+//!   principle, this makes it easy to clone the tree for e.g. uploading to a GPU (although we haven't tried it for ourselves).
+//! - The level 0 allocator does not store pointers, only values. Pointer overhead at higher levels can be amortized using
+//!   chunked data, i.e. `[T; CHUNK_SIZE]`. The alternative "pointerless" octrees take up less memory, but are also more complex
+//!   to edit and traverse.
+//! - By using a hash map of root nodes, the addressable space is not limited by the height of the tree, and it is not necessary
+//!   to "translate" the octree as it follows a focal point.
+//! - By having a very simple data layout, access using a [`NodePtr`](crate::NodePtr) is simply an array lookup.
+//! - The [`NodeEntry`](crate::NodeEntry) and `Tree::child_entry` APIs allow for very simple code that fills entire trees with a
+//!   single visitor closure.
+//! - By implementing [`VectorKey`](crate::VectorKey) for a custom key type, the addressable range can be extended to
+//!   coordinates of arbitrary precision.
+//!
 //! # Performance
 //!
 //! This structure is optimized for iteration speed and spatial queries that benefit from a bounding volume hierarchy (like
