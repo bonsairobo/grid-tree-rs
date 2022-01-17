@@ -689,16 +689,14 @@ where
         queue.push_back((ancestor_ptr, ancestor_coordinates));
         while let Some((parent_ptr, parent_coords)) = queue.pop_front() {
             let command = visitor(parent_ptr, parent_coords);
-            if command == VisitCommand::Continue {
-                if parent_ptr.level > min_level {
-                    self.visit_children_with_coordinates(
-                        parent_ptr,
-                        parent_coords,
-                        |child_ptr, child_coords| {
-                            queue.push_back((child_ptr, child_coords));
-                        },
-                    );
-                }
+            if command == VisitCommand::Continue && parent_ptr.level > min_level {
+                self.visit_children_with_coordinates(
+                    parent_ptr,
+                    parent_coords,
+                    |child_ptr, child_coords| {
+                        queue.push_back((child_ptr, child_coords));
+                    },
+                );
             }
         }
     }
