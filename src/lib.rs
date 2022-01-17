@@ -1,3 +1,6 @@
+//! [![Crates.io](https://img.shields.io/crates/v/grid-tree.svg)](https://crates.io/crates/grid-tree)
+//! [![Docs.rs](https://docs.rs/grid-tree/badge.svg)](https://docs.rs/grid-tree)
+//!
 //! Pixel quadtrees and voxel octrees.
 //!
 //! Store any type in an [`OctreeI32`](crate::OctreeI32), [`OctreeU32`](crate::OctreeU32), [`QuadtreeI32`](crate::QuadtreeI32),
