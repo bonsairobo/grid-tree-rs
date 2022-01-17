@@ -4,6 +4,8 @@ description = "Pixel quadtrees and voxel octrees."
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/bonsairobo/grid-tree-rs"
+keywords = ["grid", "quadtree", "octree", "spatial", "voxel"]
 
 [features]
 default = ["glam"]
