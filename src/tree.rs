@@ -383,7 +383,7 @@ where
     pub fn fill_root(
         &mut self,
         key: NodeKey<V>,
-        mut filler: impl FnMut(&mut NodeEntry<'_, T, CHILDREN>) -> VisitCommand,
+        filler: impl FnOnce(&mut NodeEntry<'_, T, CHILDREN>) -> VisitCommand,
     ) -> (Option<RootNode>, VisitCommand) {
         let Self {
             allocators,
