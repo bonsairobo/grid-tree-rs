@@ -489,7 +489,7 @@ where
     }
 
     /// Call `filler` on all nodes from the root ancestor to `target_key`.
-    pub fn fill_path_to_node(
+    pub fn fill_path_to_node_from_root(
         &mut self,
         target_key: NodeKey<V>,
         mut filler: impl FnMut(NodeKey<V>, &mut NodeEntry<'_, T, CHILDREN>) -> VisitCommand,
@@ -500,28 +500,45 @@ where
             self.fill_root(root_key, |root_entry| filler(root_key, root_entry));
 
         if let (Some(root_node), VisitCommand::Continue) = (root_node, command) {
-            let mut parent_ptr = NodePtr::new(root_key.level, root_node.self_ptr);
-            let mut parent_coords = root_key.coordinates;
-            for child_level in (target_key.level..root_key.level).rev() {
-                // Get the child index of the ancestor at this level.
-                let level_diff = child_level - target_key.level;
-                let ancestor_coords = S::ancestor_key(target_key.coordinates, level_diff as u32);
-                let child_index =
-                    S::linearize_child(ancestor_coords - S::min_child_key(parent_coords));
-                let child_coords = parent_coords + S::delinearize_child(child_index);
-                let node_key = NodeKey::new(child_level, child_coords);
-                let mut child_entry = self.child_entry(parent_ptr, child_index);
-                let command = filler(node_key, &mut child_entry);
-                if command == VisitCommand::SkipDescendants {
-                    break;
-                }
-                let child_ptr = child_entry.pointer();
-                if child_ptr == EMPTY_ALLOC_PTR {
-                    break;
-                }
-                parent_ptr = NodePtr::new(child_level, child_ptr);
-                parent_coords = ancestor_coords;
+            self.fill_path_to_node(
+                root_key.coordinates,
+                NodePtr::new(root_key.level, root_node.self_ptr),
+                target_key,
+                filler,
+            );
+        }
+    }
+
+    /// Call `filler` on all nodes from the ancestor to `target_key`.
+    pub fn fill_path_to_node(
+        &mut self,
+        ancestor_coordinates: V,
+        ancestor_ptr: NodePtr,
+        target_key: NodeKey<V>,
+        mut filler: impl FnMut(NodeKey<V>, &mut NodeEntry<'_, T, CHILDREN>) -> VisitCommand,
+    ) {
+        assert!(ancestor_ptr.level() >= target_key.level);
+
+        let mut parent_ptr = ancestor_ptr;
+        let mut parent_coords = ancestor_coordinates;
+        for child_level in (target_key.level..ancestor_ptr.level()).rev() {
+            // Get the child index of the ancestor at this level.
+            let level_diff = child_level - target_key.level;
+            let ancestor_coords = S::ancestor_key(target_key.coordinates, level_diff as u32);
+            let child_index = S::linearize_child(ancestor_coords - S::min_child_key(parent_coords));
+            let child_coords = parent_coords + S::delinearize_child(child_index);
+            let node_key = NodeKey::new(child_level, child_coords);
+            let mut child_entry = self.child_entry(parent_ptr, child_index);
+            let command = filler(node_key, &mut child_entry);
+            if command == VisitCommand::SkipDescendants {
+                break;
             }
+            let child_ptr = child_entry.pointer();
+            if child_ptr == EMPTY_ALLOC_PTR {
+                break;
+            }
+            parent_ptr = NodePtr::new(child_level, child_ptr);
+            parent_coords = ancestor_coords;
         }
     }
 
@@ -1212,7 +1229,7 @@ mod test {
 
         let target_key = NodeKey::new(1, IVec3::new(1, 1, 1));
         let mut path = Vec::new();
-        tree.fill_path_to_node(target_key, |key, entry| {
+        tree.fill_path_to_node_from_root(target_key, |key, entry| {
             match entry {
                 NodeEntry::Occupied(_) => {
                     panic!("Unexpected occupied entry");
