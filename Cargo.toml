@@ -11,11 +11,11 @@ keywords = ["grid", "quadtree", "octree", "spatial", "voxel"]
 default = ["glam"]
 
 [dependencies]
-ahash = "0.7"
+ahash = "0.8"
 slab = "0.4"
 smallvec = "1.7"
 
-ndshape = "0.2"
+ndshape = "0.3"
 
 # The default choice of VectorKey.
-glam = { version = "0.20", optional = true }
+glam = { version = "0.21", optional = true }
