@@ -1,6 +1,6 @@
 use crate::{BranchShape, ChildIndex, Level, Tree, VectorKey};
 
-use glam::{const_ivec2, const_ivec3, const_uvec2, const_uvec3, IVec2, IVec3, UVec2, UVec3};
+use glam::{IVec2, IVec3, UVec2, UVec3};
 use ndshape::{
     ConstPow2Shape2i32, ConstPow2Shape2u32, ConstPow2Shape3i32, ConstPow2Shape3u32, ConstShape,
 };
@@ -82,10 +82,10 @@ macro_rules! impl_unsigned_branch_shape {
     };
 }
 
-impl_unsigned_branch_shape!(QuadtreeShapeU32, UVec2, const_uvec2!([1; 2]));
-impl_unsigned_branch_shape!(OctreeShapeU32, UVec3, const_uvec3!([1; 3]));
-impl_signed_branch_shape!(QuadtreeShapeI32, IVec2, const_ivec2!([1; 2]));
-impl_signed_branch_shape!(OctreeShapeI32, IVec3, const_ivec3!([1; 3]));
+impl_unsigned_branch_shape!(QuadtreeShapeU32, UVec2, UVec2::from_array([1; 2]));
+impl_unsigned_branch_shape!(OctreeShapeU32, UVec3, UVec3::from_array([1; 3]));
+impl_signed_branch_shape!(QuadtreeShapeI32, IVec2, IVec2::from_array([1; 2]));
+impl_signed_branch_shape!(OctreeShapeI32, IVec3, IVec3::from_array([1; 3]));
 
 impl VectorKey for IVec2 {
     #[inline]
