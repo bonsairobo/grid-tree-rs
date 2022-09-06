@@ -472,7 +472,8 @@ where
                 let child_level = parent_ptr.level - 1;
                 for child_index in 0..Self::CHILDREN {
                     let mut child_entry = self.child_entry(parent_ptr, child_index);
-                    let child_coords = parent_coords + S::delinearize_child(child_index);
+                    let child_coords =
+                        S::min_child_key(parent_coords) + S::delinearize_child(child_index);
                     let child_key = NodeKey::new(child_level, child_coords);
                     let command = filler(child_key, &mut child_entry);
                     if let VisitCommand::Continue = command {
@@ -526,7 +527,7 @@ where
             let level_diff = child_level - target_key.level;
             let ancestor_coords = S::ancestor_key(target_key.coordinates, level_diff as u32);
             let child_index = S::linearize_child(ancestor_coords - S::min_child_key(parent_coords));
-            let child_coords = parent_coords + S::delinearize_child(child_index);
+            let child_coords = S::min_child_key(parent_coords) + S::delinearize_child(child_index);
             let node_key = NodeKey::new(child_level, child_coords);
             let mut child_entry = self.child_entry(parent_ptr, child_index);
             let command = filler(node_key, &mut child_entry);
@@ -1162,10 +1163,10 @@ mod test {
         let mut tree = OctreeI32::new(3);
 
         let root_key = NodeKey::new(2, IVec3::new(1, 1, 1));
-        let (root_node, _) = tree.insert_root(root_key, None, ());
+        let (root_node, _) = tree.insert_root(root_key, None, root_key.coordinates);
         let root_ptr = NodePtr::new(2, root_node.self_ptr);
-        tree.fill_descendants(root_ptr, root_key.coordinates, 0, |_child_coords, entry| {
-            let (ptr, &mut ()) = entry.or_insert_with(|| ());
+        tree.fill_descendants(root_ptr, root_key.coordinates, 0, |child_coords, entry| {
+            let (ptr, &mut _coords) = entry.or_insert_with(|| child_coords.coordinates);
             assert_ne!(ptr, EMPTY_ALLOC_PTR);
             VisitCommand::Continue
         });
@@ -1176,6 +1177,7 @@ mod test {
             root_key.coordinates,
             0,
             |child_ptr, child_coords| {
+                assert_eq!(&child_coords, tree.get_value(child_ptr).unwrap());
                 if child_ptr.level() == 0 && child_coords % 2 == IVec3::ZERO {
                     visited_lvl0.insert(child_coords, child_ptr);
                 }
@@ -1227,7 +1229,7 @@ mod test {
     fn fill_path_to_node() {
         let mut tree = OctreeI32::new(5);
 
-        let target_key = NodeKey::new(1, IVec3::new(1, 1, 1));
+        let target_key = NodeKey::new(1, IVec3::new(15, 15, 15));
         let mut path = Vec::new();
         tree.fill_path_to_node_from_root(target_key, |key, entry| {
             match entry {
