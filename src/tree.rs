@@ -599,7 +599,7 @@ where
             let child_ptr = children.pointers[child_index as usize];
 
             (child_ptr != EMPTY_ALLOC_PTR)
-                .then(|| child_ptr)
+                .then_some(child_ptr)
                 .and_then(|child_ptr| {
                     let child_ptr = NodePtr {
                         level: children.level,
