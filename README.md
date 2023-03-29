@@ -37,9 +37,6 @@ by using dense chunk values.
 - random access with [`NodeKey`](crate::NodeKey): O(depth)
 - random access with [`NodePtr`](crate::NodePtr): O(1)
 - iteration: O(nodes)
-- memory usage per node:
-  - **level 0**: `size_of::<T>()` bytes
-  - **level N > 0**: `size_of::<T>() + CHILDREN * 4` bytes
-  - *where* `CHILDREN=4` for a quadtree and `CHILDREN=8` for an octree
+- memory usage per node = `size_of::<T>() + 4` bytes
 
 License: MIT OR Apache-2.0
