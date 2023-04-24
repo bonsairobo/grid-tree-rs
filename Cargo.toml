@@ -18,4 +18,4 @@ smallvec = "1.7"
 ndshape = "0.3"
 
 # The default choice of VectorKey.
-glam = { version = "0.21", optional = true }
+glam = { version = "0.23", optional = true }
